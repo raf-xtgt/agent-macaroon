@@ -4,7 +4,11 @@ from datetime import datetime, timezone
 
 import pytest
 
-from macaroon.attenuate import DelegationDepthExceededError, attenuate
+from macaroon.attenuate import (
+    DelegationDepthExceededError,
+    attenuate,
+    current_scope,
+)
 from macaroon.issue import issue_root_macaroon
 from macaroon.verify import (
     VerificationContext,
@@ -12,6 +16,32 @@ from macaroon.verify import (
     verify_signature,
 )
 from registry.agents_registry import AgentRegistry
+
+
+def test_current_scope_public_helper() -> None:
+    """Assert current_scope extracts the latest scope caveat as a frozenset."""
+    root_key = b"enterprise-hmac-key"
+    registry = AgentRegistry()
+    registry.register(
+        agent_id="researcher_agent",
+        display_name="Researcher",
+        max_scope={"read", "fetch"},
+        owner="team",
+    )
+
+    root = issue_root_macaroon(
+        human_subject_id="user_admin",
+        purpose="Testing current_scope",
+        initial_scope={"read", "write", "fetch"},
+        root_key=root_key,
+    )
+
+    # Root scope
+    assert current_scope(root) == frozenset({"fetch", "read", "write"})
+
+    # Attenuated scope
+    hop1 = attenuate(root, "researcher_agent", {"read", "fetch"}, registry)
+    assert current_scope(hop1) == frozenset({"fetch", "read"})
 
 
 def test_two_hop_narrowing_delegation_chain() -> None:

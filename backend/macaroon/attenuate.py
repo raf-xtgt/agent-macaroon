@@ -9,8 +9,16 @@ class DelegationDepthExceededError(Exception):
     """Raised when delegation depth reaches 0 and further attenuation is attempted."""
 
 
-def _extract_current_scope(macaroon: Macaroon) -> set[str]:
-    """Extract the effective scope from the last 'scope=' caveat in the macaroon."""
+def current_scope(macaroon: Macaroon) -> frozenset[str]:
+    """Extract the effective scope from the last 'scope=' caveat in the macaroon.
+
+    Args:
+        macaroon: Macaroon bearer token.
+
+    Returns:
+        frozenset[str]: The set of allowed action verbs from the most recent scope caveat,
+            or an empty frozenset if no scope caveat is present.
+    """
     scopes: list[set[str]] = []
     for caveat in macaroon.first_party_caveats():
         cid = (
@@ -26,8 +34,8 @@ def _extract_current_scope(macaroon: Macaroon) -> set[str]:
                 scopes.append({a.strip() for a in raw.split(",") if a.strip()})
 
     if not scopes:
-        return set()
-    return scopes[-1]
+        return frozenset()
+    return frozenset(scopes[-1])
 
 
 def _extract_remaining_depth(macaroon: Macaroon, default_depth: int = 5) -> int:
@@ -87,10 +95,10 @@ def attenuate(
             f"Cannot attenuate macaroon: remaining delegation depth is {remaining_depth}"
         )
 
-    current_scope = _extract_current_scope(macaroon)
+    curr_scope = current_scope(macaroon)
     agent_ceiling = set(registry.ceiling(to_agent_id))
 
-    new_scope = current_scope & task_required_scope & agent_ceiling
+    new_scope = set(curr_scope) & set(task_required_scope) & agent_ceiling
 
     attenuated = macaroon.copy()
     scope_str = ",".join(sorted(new_scope))
