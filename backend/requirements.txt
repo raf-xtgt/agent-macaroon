@@ -1,35 +1,13 @@
-# agent-macaroon backend — pinned dependencies.
-# Fixed stack per AGENTS.md ("Tech stack") — do not substitute without asking.
-
-# --- Agent framework (mandatory per hackathon rules) ---
 google-adk==2.7.1
-
-# --- Macaroon / capability tokens ---
-# pymacaroons needs libsodium for its crypto bindings via PyNaCl; if the PyNaCl wheel
-# install fails on your platform, install libsodium via your system package manager first
-# (see AGENTS.md "Setup").
 pymacaroons==0.13.0
 PyNaCl==1.6.2
-
-# --- Web/API layer ---
-# ADK's own dev server bundles FastAPI/uvicorn already; pinned explicitly here because
-# audit/web.py (F6 replay UI) and gateway/adapters/proxy_stub.py (extension stub,
-# agent-specification.md §13) run their own endpoints outside the ADK-managed app.
 fastapi==0.141.1
 uvicorn[standard]==0.52.3
 httpx==0.28.1
-
-# --- Google Cloud infra (Agent Registry / Memory Bank / audit storage) ---
 google-cloud-firestore==2.28.1
-
-# --- Tracing (Agent Observability, F6) ---
 opentelemetry-sdk==1.42.1
 opentelemetry-exporter-gcp-trace==1.14.0
-
-# --- Testing ---
 pytest==9.1.1
 pytest-asyncio==1.4.0
-
-# --- Formatting / linting (AGENTS.md "Code style") ---
 black==26.5.1
 ruff==0.16.3
