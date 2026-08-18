@@ -13,6 +13,7 @@ from google.genai import types
 from pymacaroons import Macaroon
 from pymacaroons.exceptions import MacaroonException
 
+from armor.screen import screen_text
 from gateway.policy import evaluate
 from macaroon.attenuate import (
     DelegationDepthExceededError,
@@ -269,3 +270,53 @@ class GatewayPlugin(BasePlugin):
             "error": "denied_by_gateway",
             "reason": decision.reason,
         }
+
+    async def after_tool_callback(
+        self,
+        *,
+        tool: BaseTool,
+        tool_args: dict[str, Any],
+        tool_context: ToolContext,
+        result: dict[str, Any],
+    ) -> dict[str, Any] | None:
+        """Screen tool output for prompt injection and quarantine flagged content.
+
+        Evaluates every string value in the tool result dictionary against Model Armor
+        injection detection patterns. If any field matches an injection signature,
+        replaces the value with a quarantine notice while preserving non-flagged and
+        non-string fields.
+
+        Args:
+            tool: The tool instance that was executed.
+            tool_args: The arguments passed to the tool.
+            tool_context: The ADK execution context.
+            result: The dictionary returned by the tool execution.
+
+        Returns:
+            dict[str, Any] | None: Modified dictionary if flagged, or None if clean.
+        """
+        if not isinstance(result, dict):
+            return None
+
+        quarantined: dict[str, Any] = {}
+        has_quarantine = False
+
+        for key, value in result.items():
+            if isinstance(value, str):
+                screen_res = screen_text(value)
+                if screen_res.flagged:
+                    patterns_str = ", ".join(screen_res.matched_patterns)
+                    quarantined[key] = (
+                        f"[CONTENT QUARANTINED BY MODEL ARMOR: "
+                        f"potential prompt injection detected — pattern: {patterns_str}]"
+                    )
+                    has_quarantine = True
+                else:
+                    quarantined[key] = value
+            else:
+                quarantined[key] = value
+
+        if has_quarantine:
+            return quarantined
+
+        return None

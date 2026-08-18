@@ -28,6 +28,8 @@ def _load_root_key() -> bytes:
     return key.encode("utf-8")
 
 
+_ROOT_KEY = _load_root_key()
+
 MODEL_NAME = os.environ.get("GOOGLE_GENAI_MODEL", "gemini-3.5-flash")
 
 orchestrator_agent = Agent(
@@ -63,7 +65,7 @@ registry.register(
 
 # Instantiate the GatewayPlugin with the root key, shared registry, and initial scope
 gateway_plugin = GatewayPlugin(
-    root_key=_load_root_key(),
+    root_key=_ROOT_KEY,
     registry=registry,
     initial_scope={"read", "fetch", "delete"},
 )

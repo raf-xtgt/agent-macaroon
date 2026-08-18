@@ -1,5 +1,10 @@
 """Unit tests for orchestrator App wiring, GatewayPlugin registration, and root key loading."""
 
+import os
+import subprocess
+import sys
+from pathlib import Path
+
 import pytest
 from google.adk.apps import App
 
@@ -70,3 +75,53 @@ def test_orchestrator_package_reexports() -> None:
     assert pkg_app is app
     assert pkg_orchestrator_agent is orchestrator_agent
     assert pkg_root_agent is root_agent
+
+
+def test_import_missing_root_key_subprocess_fails_cleanly() -> None:
+    """Assert importing agents.orchestrator.agent without AGENT_MACAROON_ROOT_KEY fails cleanly.
+
+    Verifies the subprocess raises RuntimeError for missing AGENT_MACAROON_ROOT_KEY
+    and does NOT raise ValidationError ('already has a parent agent') caused by
+    singleton sub-agent mutation before root key validation.
+    """
+    backend_dir = Path(__file__).resolve().parents[2]
+    env = {k: v for k, v in os.environ.items() if k != "AGENT_MACAROON_ROOT_KEY"}
+    env["PYTHONPATH"] = str(backend_dir)
+
+    proc = subprocess.run(
+        [sys.executable, "-c", "import agents.orchestrator.agent"],
+        capture_output=True,
+        text=True,
+        env=env,
+        cwd=str(backend_dir),
+        check=False,
+    )
+
+    assert proc.returncode != 0
+    assert "RuntimeError" in proc.stderr
+    assert "AGENT_MACAROON_ROOT_KEY" in proc.stderr
+    assert "ValidationError" not in proc.stderr
+    assert "already has a parent" not in proc.stderr
+
+
+def test_import_valid_root_key_subprocess_succeeds() -> None:
+    """Assert importing agents.orchestrator.agent in a clean subprocess succeeds when key is set."""
+    backend_dir = Path(__file__).resolve().parents[2]
+    env = {
+        **os.environ,
+        "AGENT_MACAROON_ROOT_KEY": "test_secret_key_123",
+        "PYTHONPATH": str(backend_dir),
+    }
+
+    proc = subprocess.run(
+        [sys.executable, "-c", "import agents.orchestrator.agent"],
+        capture_output=True,
+        text=True,
+        env=env,
+        cwd=str(backend_dir),
+        check=False,
+    )
+
+    assert proc.returncode == 0
+    assert "RuntimeError" not in proc.stderr
+    assert "ValidationError" not in proc.stderr
