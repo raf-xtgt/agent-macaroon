@@ -4,6 +4,7 @@ import { SpanRow } from "./SpanRow";
 interface TimelineTreeProps {
   spans: SpanData[];
   gcpProjectId?: string;
+  chainId?: string;
 }
 
 interface FlattenedTreeNode {
@@ -13,7 +14,7 @@ interface FlattenedTreeNode {
   indexNumber: number;
 }
 
-export function TimelineTree({ spans, gcpProjectId }: TimelineTreeProps) {
+export function TimelineTree({ spans, gcpProjectId, chainId }: TimelineTreeProps) {
   if (!spans || spans.length === 0) {
     return null;
   }
@@ -95,6 +96,7 @@ export function TimelineTree({ spans, gcpProjectId }: TimelineTreeProps) {
           nodeSymbol={item.nodeSymbol}
           indexNumber={item.indexNumber}
           gcpProjectId={gcpProjectId}
+          chainId={chainId}
         />
       ))}
     </div>

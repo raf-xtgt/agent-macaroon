@@ -9,6 +9,7 @@ interface SpanRowProps {
   nodeSymbol: string;
   indexNumber: number;
   gcpProjectId?: string;
+  chainId?: string;
 }
 
 function formatTime(isoString: string): string {
@@ -27,6 +28,7 @@ export function SpanRow({
   nodeSymbol,
   indexNumber,
   gcpProjectId = "agent-macaroon",
+  chainId = "unknown",
 }: SpanRowProps) {
   const [expanded, setExpanded] = useState(false);
 
@@ -57,7 +59,7 @@ export function SpanRow({
   const timeFormatted = formatTime(span.timestamp);
   const traceUrl = `https://console.cloud.google.com/traces/explorer?project=${encodeURIComponent(
     gcpProjectId
-  )}&query=span_id%3D${encodeURIComponent(span.span_id)}`;
+  )}&query=chain_id%3D${encodeURIComponent(chainId)}`;
 
   // Circled index numbers for mobile collapse
   const circledNumbers = ["⓪", "①", "②", "③", "④", "⑤", "⑥", "⑦", "⑧", "⑨", "⑩"];

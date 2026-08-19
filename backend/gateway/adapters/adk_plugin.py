@@ -440,9 +440,43 @@ class GatewayPlugin(BasePlugin):
                 quarantined[key] = value
 
         parent_span_id: str | None = None
+        raw_macaroon = None
         state = getattr(tool_context, "state", None)
         if state is not None:
             parent_span_id = state.get("agent_macaroon_span")
+            raw_macaroon = state.get("agent_macaroon")
+
+        macaroon: Macaroon | None = None
+        if isinstance(raw_macaroon, str) and raw_macaroon:
+            try:
+                macaroon = Macaroon.deserialize(raw_macaroon)
+            except (
+                MacaroonException,
+                ValueError,
+                TypeError,
+                AttributeError,
+                UnicodeError,
+            ):
+                macaroon = None
+
+        macaroon_hash: str | None = None
+        chain_id: str | None = None
+        if macaroon is not None:
+            try:
+                raw_id = macaroon.identifier
+                raw_id_bytes = (
+                    raw_id.encode("utf-8") if isinstance(raw_id, str) else raw_id
+                )
+                macaroon_hash = hashlib.sha256(raw_id_bytes).hexdigest()
+            except (AttributeError, UnicodeError, TypeError):
+                macaroon_hash = None
+
+            try:
+                parsed_id = parse_identifier(macaroon)
+                if isinstance(parsed_id, dict):
+                    chain_id = parsed_id.get("chain_id")
+            except Exception:  # noqa: BLE001
+                chain_id = None
 
         tool_name = getattr(tool, "name", "")
         agent_id = getattr(tool_context, "agent_name", "unknown")
@@ -450,10 +484,10 @@ class GatewayPlugin(BasePlugin):
         if has_quarantine:
             quarantined_keys = sorted(quarantined.keys())
             emit_span(
-                chain_id=None,
+                chain_id=chain_id,
                 parent_span_id=parent_span_id,
                 agent_id=agent_id,
-                macaroon_identifier_hash=None,
+                macaroon_identifier_hash=macaroon_hash,
                 action_requested=f"screen:{tool_name}",
                 decision="deny",
                 reason=f"quarantined fields: {quarantined_keys}",
@@ -461,10 +495,10 @@ class GatewayPlugin(BasePlugin):
             return quarantined
 
         emit_span(
-            chain_id=None,
+            chain_id=chain_id,
             parent_span_id=parent_span_id,
             agent_id=agent_id,
-            macaroon_identifier_hash=None,
+            macaroon_identifier_hash=macaroon_hash,
             action_requested=f"screen:{tool_name}",
             decision="allow",
             reason="clean",

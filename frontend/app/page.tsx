@@ -146,7 +146,7 @@ export default async function Page(props: PageProps) {
 
             {/* Tree Spans */}
             <div className="px-4 sm:px-6 py-4">
-              <TimelineTree spans={replayData.spans} gcpProjectId={gcpProject} />
+              <TimelineTree spans={replayData.spans} gcpProjectId={gcpProject} chainId={chainId} />
             </div>
           </div>
         ) : null}
