@@ -1,5 +1,6 @@
 """ADK Plugin adapter enforcing fail-closed gateway policy across all lifecycle hooks."""
 
+import hashlib
 import uuid
 from typing import Any
 
@@ -14,13 +15,14 @@ from pymacaroons import Macaroon
 from pymacaroons.exceptions import MacaroonException
 
 from armor.screen import screen_text
+from audit.trace import emit_span
 from gateway.policy import evaluate
 from macaroon.attenuate import (
     DelegationDepthExceededError,
     attenuate,
     current_scope,
 )
-from macaroon.issue import issue_root_macaroon
+from macaroon.issue import issue_root_macaroon, parse_identifier
 from macaroon.verify import verify_signature
 from registry.agents_registry import AgentRegistry
 
@@ -70,7 +72,8 @@ class GatewayPlugin(BasePlugin):
         """Mint the root macaroon for a task delegation chain on the first user message.
 
         Extracts human user identity and purpose text, attaches the plugin's initial scope,
-        and binds ADK's native invocation ID as the chain_id in session state.
+        binds ADK's native invocation ID as the chain_id, emits the root audit span (F6),
+        and stores the token and span pointer in session state.
 
         Args:
             invocation_context: Context for the overall invocation, holding session state.
@@ -105,12 +108,29 @@ class GatewayPlugin(BasePlugin):
                 chain_id=invocation_id,
             )
 
+            raw_id = macaroon.identifier
+            raw_id_bytes = raw_id.encode("utf-8") if isinstance(raw_id, str) else raw_id
+            macaroon_hash = hashlib.sha256(raw_id_bytes).hexdigest()
+
+            span_id = emit_span(
+                chain_id=invocation_id,
+                parent_span_id=None,
+                agent_id="orchestrator_agent",
+                macaroon_identifier_hash=macaroon_hash,
+                action_requested="issue_macaroon",
+                decision="allow",
+                reason="root macaroon issued",
+                human_subject_id=user_id,
+                purpose=purpose,
+            )
+
             if hasattr(invocation_context, "session") and hasattr(
                 invocation_context.session, "state"
             ):
                 invocation_context.session.state["agent_macaroon"] = (
                     macaroon.serialize()
                 )
+                invocation_context.session.state["agent_macaroon_span"] = span_id
         except Exception:  # noqa: BLE001, S110
             # F1 must never crash an entire session on token minting failure
             pass
@@ -127,7 +147,8 @@ class GatewayPlugin(BasePlugin):
 
         Fires uniformly across all agent handoffs (including entry agent). Verifies the
         macaroon HMAC signature, computes scope intersection with the target agent's
-        registry ceiling, and writes the attenuated macaroon back to session state.
+        registry ceiling, and writes the attenuated macaroon and updated span pointer back
+        to session state. Emits audit spans for every allow and denial decision (F6).
         Fails closed on any missing token, invalid signature, or delegation depth exhaustion.
 
         Args:
@@ -138,11 +159,25 @@ class GatewayPlugin(BasePlugin):
             None if attenuation succeeds.
             types.Content containing denial text if delegation fails (short-circuiting the agent).
         """
+        agent_name = getattr(agent, "name", "unknown_agent")
+
+        parent_span_id: str | None = None
         raw_macaroon = None
         if hasattr(callback_context, "state") and callback_context.state is not None:
+            parent_span_id = callback_context.state.get("agent_macaroon_span")
             raw_macaroon = callback_context.state.get("agent_macaroon")
 
         if not raw_macaroon or not isinstance(raw_macaroon, str):
+            # Orphaned span: chain_id and identifier hash cannot be parsed because no token exists
+            emit_span(
+                chain_id=None,
+                parent_span_id=parent_span_id,
+                agent_id=agent_name,
+                macaroon_identifier_hash=None,
+                action_requested="transfer_to_agent",
+                decision="deny",
+                reason="No delegation macaroon found in session state.",
+            )
             return types.Content(
                 role="model",
                 parts=[
@@ -161,6 +196,16 @@ class GatewayPlugin(BasePlugin):
             AttributeError,
             UnicodeError,
         ):
+            # Orphaned span: chain_id and identifier hash cannot be parsed due to deserialization failure
+            emit_span(
+                chain_id=None,
+                parent_span_id=parent_span_id,
+                agent_id=agent_name,
+                macaroon_identifier_hash=None,
+                action_requested="transfer_to_agent",
+                decision="deny",
+                reason="Failed to deserialize delegation macaroon.",
+            )
             return types.Content(
                 role="model",
                 parts=[
@@ -170,8 +215,34 @@ class GatewayPlugin(BasePlugin):
                 ],
             )
 
+        # Extract identifier hash and chain_id from plaintext identifier
+        macaroon_hash: str | None = None
+        try:
+            raw_id = macaroon.identifier
+            raw_id_bytes = raw_id.encode("utf-8") if isinstance(raw_id, str) else raw_id
+            macaroon_hash = hashlib.sha256(raw_id_bytes).hexdigest()
+        except (AttributeError, UnicodeError, TypeError):
+            macaroon_hash = None
+
+        chain_id: str | None = None
+        try:
+            parsed_id = parse_identifier(macaroon)
+            if isinstance(parsed_id, dict):
+                chain_id = parsed_id.get("chain_id")
+        except Exception:  # noqa: BLE001
+            chain_id = None
+
         # Verify HMAC signature chain at delegation time
         if not verify_signature(macaroon, self._root_key):
+            emit_span(
+                chain_id=chain_id,
+                parent_span_id=parent_span_id,
+                agent_id=agent_name,
+                macaroon_identifier_hash=macaroon_hash,
+                action_requested="transfer_to_agent",
+                decision="deny",
+                reason="Invalid or tampered macaroon signature.",
+            )
             return types.Content(
                 role="model",
                 parts=[
@@ -181,7 +252,6 @@ class GatewayPlugin(BasePlugin):
                 ],
             )
 
-        agent_name = getattr(agent, "name", "unknown_agent")
         curr_scope = current_scope(macaroon)
 
         try:
@@ -192,6 +262,15 @@ class GatewayPlugin(BasePlugin):
                 registry=self._registry,
             )
         except DelegationDepthExceededError as exc:
+            emit_span(
+                chain_id=chain_id,
+                parent_span_id=parent_span_id,
+                agent_id=agent_name,
+                macaroon_identifier_hash=macaroon_hash,
+                action_requested="transfer_to_agent",
+                decision="deny",
+                reason=f"Delegation depth exceeded: {exc}",
+            )
             return types.Content(
                 role="model",
                 parts=[
@@ -201,6 +280,15 @@ class GatewayPlugin(BasePlugin):
                 ],
             )
         except Exception as exc:  # noqa: BLE001
+            emit_span(
+                chain_id=chain_id,
+                parent_span_id=parent_span_id,
+                agent_id=agent_name,
+                macaroon_identifier_hash=macaroon_hash,
+                action_requested="transfer_to_agent",
+                decision="deny",
+                reason=f"Macaroon attenuation failed: {exc}",
+            )
             return types.Content(
                 role="model",
                 parts=[
@@ -210,7 +298,26 @@ class GatewayPlugin(BasePlugin):
                 ],
             )
 
+        attenuated_raw_id = attenuated.identifier
+        attenuated_raw_bytes = (
+            attenuated_raw_id.encode("utf-8")
+            if isinstance(attenuated_raw_id, str)
+            else attenuated_raw_id
+        )
+        attenuated_hash = hashlib.sha256(attenuated_raw_bytes).hexdigest()
+
+        span_id = emit_span(
+            chain_id=chain_id,
+            parent_span_id=parent_span_id,
+            agent_id=agent_name,
+            macaroon_identifier_hash=attenuated_hash,
+            action_requested="transfer_to_agent",
+            decision="allow",
+            reason="attenuated",
+        )
+
         callback_context.state["agent_macaroon"] = attenuated.serialize()
+        callback_context.state["agent_macaroon_span"] = span_id
         return None
 
     async def before_tool_callback(
@@ -224,7 +331,7 @@ class GatewayPlugin(BasePlugin):
 
         Reads the serialized macaroon from session state ('agent_macaroon'), maps
         the tool name to an action verb, resolves the executing agent identity from
-        ADK's context, and evaluates the gateway policy.
+        ADK's context, evaluates the gateway policy, and emits an audit span (F6).
 
         Args:
             tool: The tool instance being called.
@@ -263,6 +370,22 @@ class GatewayPlugin(BasePlugin):
             registry=self._registry,
         )
 
+        parent_span_id: str | None = None
+        state = getattr(tool_context, "state", None)
+        if state is not None:
+            parent_span_id = state.get("agent_macaroon_span")
+
+        emit_span(
+            chain_id=decision.chain_id,
+            parent_span_id=parent_span_id,
+            agent_id=decision.presenting_agent_id,
+            macaroon_identifier_hash=decision.macaroon_identifier_hash,
+            action_requested=decision.requested_action,
+            decision="allow" if decision.allowed else "deny",
+            reason=decision.reason,
+            timestamp=decision.timestamp,
+        )
+
         if decision.allowed:
             return None
 
@@ -284,7 +407,7 @@ class GatewayPlugin(BasePlugin):
         Evaluates every string value in the tool result dictionary against Model Armor
         injection detection patterns. If any field matches an injection signature,
         replaces the value with a quarantine notice while preserving non-flagged and
-        non-string fields.
+        non-string fields. Emits a content screening audit span (F6).
 
         Args:
             tool: The tool instance that was executed.
@@ -316,7 +439,34 @@ class GatewayPlugin(BasePlugin):
             else:
                 quarantined[key] = value
 
+        parent_span_id: str | None = None
+        state = getattr(tool_context, "state", None)
+        if state is not None:
+            parent_span_id = state.get("agent_macaroon_span")
+
+        tool_name = getattr(tool, "name", "")
+        agent_id = getattr(tool_context, "agent_name", "unknown")
+
         if has_quarantine:
+            quarantined_keys = sorted(quarantined.keys())
+            emit_span(
+                chain_id=None,
+                parent_span_id=parent_span_id,
+                agent_id=agent_id,
+                macaroon_identifier_hash=None,
+                action_requested=f"screen:{tool_name}",
+                decision="deny",
+                reason=f"quarantined fields: {quarantined_keys}",
+            )
             return quarantined
 
+        emit_span(
+            chain_id=None,
+            parent_span_id=parent_span_id,
+            agent_id=agent_id,
+            macaroon_identifier_hash=None,
+            action_requested=f"screen:{tool_name}",
+            decision="allow",
+            reason="clean",
+        )
         return None
