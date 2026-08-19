@@ -1,9 +1,14 @@
-"""Unit tests for FastAPI audit replay API routes (F6)."""
+"""Unit tests for FastAPI audit replay API routes (F6) and merged ADK app serving."""
 
+import os
 from datetime import datetime, timezone
 from unittest.mock import patch
 
 from fastapi.testclient import TestClient
+
+# Ensure root key and GCP project exist for test environment
+os.environ.setdefault("AGENT_MACAROON_ROOT_KEY", "test_secret_root_key_123")
+os.environ.setdefault("GOOGLE_CLOUD_PROJECT", "test-project")
 
 from audit.trace import Span
 from main import app
@@ -76,3 +81,20 @@ def test_get_replay_404_not_found() -> None:
     assert response.status_code == 404
     data = response.json()
     assert "no spans found for chain_id non-existent" in data["detail"]
+
+
+def test_merged_app_serves_orchestrator_agent() -> None:
+    """Assert the merged FastAPI app exposes ADK agent-serving endpoints for orchestrator."""
+    list_response = client.get("/list-apps")
+    assert list_response.status_code == 200
+    apps = list_response.json()
+    assert "orchestrator" in apps
+
+    info_response = client.get("/apps/orchestrator/app-info")
+    assert info_response.status_code == 200
+    info_data = info_response.json()
+    assert info_data["name"] == "orchestrator"
+    assert info_data["rootAgentName"] == "orchestrator_agent"
+    assert "orchestrator_agent" in info_data["agents"]
+    assert "researcher_agent" in info_data["agents"]
+    assert "tool_caller_agent" in info_data["agents"]
