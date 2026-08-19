@@ -24,6 +24,7 @@ from macaroon.attenuate import (
 )
 from macaroon.issue import issue_root_macaroon, parse_identifier
 from macaroon.verify import verify_signature
+from memory.behavior import recent_violation_count, record_denial
 from registry.agents_registry import AgentRegistry
 
 TOOL_ACTION_MAP: dict[str, str] = {
@@ -31,6 +32,8 @@ TOOL_ACTION_MAP: dict[str, str] = {
     "delete_record": "delete",
     "fetch_document": "fetch",
 }
+
+MEMORY_VIOLATION_THRESHOLD: int = 3
 
 
 class GatewayPlugin(BasePlugin):
@@ -100,10 +103,19 @@ class GatewayPlugin(BasePlugin):
                 else "(no text content)"
             )
 
+            # F7: Check issuing agent's recent violation history to tighten initial scope if elevated
+            violation_count = recent_violation_count("orchestrator_agent")
+            issuance_scope = self._initial_scope
+            if (
+                violation_count >= MEMORY_VIOLATION_THRESHOLD
+                and "delete" in issuance_scope
+            ):
+                issuance_scope = issuance_scope - {"delete"}
+
             macaroon = issue_root_macaroon(
                 human_subject_id=user_id,
                 purpose=purpose,
-                initial_scope=self._initial_scope,
+                initial_scope=issuance_scope,
                 root_key=self._root_key,
                 chain_id=invocation_id,
             )
@@ -370,6 +382,23 @@ class GatewayPlugin(BasePlugin):
             registry=self._registry,
         )
 
+        # F7: Read recent violation count before recording this invocation's outcome
+        violation_count = recent_violation_count(decision.presenting_agent_id)
+        if not decision.allowed:
+            record_denial(
+                agent_id=decision.presenting_agent_id,
+                chain_id=decision.chain_id,
+                reason=decision.reason,
+                timestamp=decision.timestamp,
+            )
+
+        span_reason = decision.reason
+        if violation_count >= MEMORY_VIOLATION_THRESHOLD:
+            span_reason = (
+                f"{decision.reason} [Memory Bank flag: {violation_count} "
+                f"recent denials for {decision.presenting_agent_id}]"
+            )
+
         parent_span_id: str | None = None
         state = getattr(tool_context, "state", None)
         if state is not None:
@@ -382,7 +411,7 @@ class GatewayPlugin(BasePlugin):
             macaroon_identifier_hash=decision.macaroon_identifier_hash,
             action_requested=decision.requested_action,
             decision="allow" if decision.allowed else "deny",
-            reason=decision.reason,
+            reason=span_reason,
             timestamp=decision.timestamp,
         )
 

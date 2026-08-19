@@ -962,3 +962,439 @@ async def test_gateway_parent_span_chain_structure(
     assert s7["agent_id"] == "tool_caller_agent"
     assert s7["decision"] == "allow"
     assert s7["chain_id"] == "inv-chain-100"
+
+
+# ============================================================================
+# F7: Memory Bank Cross-Session Behavioral Memory Tests
+# ============================================================================
+
+
+class _FakeDocRef:
+    def __init__(
+        self,
+        doc_id: str,
+        store: dict[str, list[dict[str, Any]]],
+        agent_id: str,
+    ) -> None:
+        self.doc_id = doc_id
+        self.store = store
+        self.agent_id = agent_id
+
+    def set(self, data: dict[str, Any]) -> None:
+        self.store.setdefault(self.agent_id, []).append(data)
+
+
+class _FakeRecordsQuery:
+    def __init__(
+        self,
+        agent_id: str,
+        store: dict[str, list[dict[str, Any]]],
+        cutoff: Any = None,
+    ) -> None:
+        self.agent_id = agent_id
+        self.store = store
+        self.cutoff = cutoff
+
+    def document(self, doc_id: str) -> _FakeDocRef:
+        return _FakeDocRef(doc_id, self.store, self.agent_id)
+
+    def where(
+        self,
+        field: str | None = None,
+        op: str | None = None,
+        value: Any = None,
+        filter: Any = None,
+    ) -> "_FakeRecordsQuery":
+        cutoff = value
+        if filter is not None:
+            cutoff = getattr(filter, "value", None)
+        return _FakeRecordsQuery(self.agent_id, self.store, cutoff=cutoff)
+
+    def stream(self) -> Any:
+        from unittest.mock import MagicMock
+
+        records = self.store.get(self.agent_id, [])
+        for r in records:
+            if self.cutoff is not None and r.get("timestamp") < self.cutoff:
+                continue
+            doc = MagicMock()
+            doc.to_dict.return_value = r
+            yield doc
+
+
+class _FakeAgentDoc:
+    def __init__(self, agent_id: str, store: dict[str, list[dict[str, Any]]]) -> None:
+        self.agent_id = agent_id
+        self.store = store
+
+    def collection(self, name: str) -> _FakeRecordsQuery:
+        if name == "records":
+            return _FakeRecordsQuery(self.agent_id, self.store)
+        raise ValueError(f"Unknown subcollection: {name}")
+
+
+class _FakeMemoryCollection:
+    def __init__(self, store: dict[str, list[dict[str, Any]]]) -> None:
+        self.store = store
+
+    def document(self, agent_id: str) -> _FakeAgentDoc:
+        return _FakeAgentDoc(agent_id, self.store)
+
+
+class _FakeFirestoreDB:
+    def __init__(self) -> None:
+        self.store: dict[str, list[dict[str, Any]]] = {}
+
+    def collection(self, name: str) -> Any:
+        if name == "agent_memory":
+            return _FakeMemoryCollection(self.store)
+        raise ValueError(f"Unknown collection: {name}")
+
+
+@pytest.mark.asyncio
+async def test_gateway_memory_bank_violation_threshold_flag_in_span_reason(
+    test_setup: dict[str, Any],
+) -> None:
+    """Assert AGENTS.md acceptance test: 3 simulated denials -> 4th request surfaces Memory Bank flag in span reason.
+
+    Negative control: after 2 denials, the 3rd request does NOT carry the Memory Bank flag.
+    """
+    from unittest.mock import patch
+
+    plugin = test_setup["plugin"]
+    fake_db = _FakeFirestoreDB()
+    emitted_spans: list[dict[str, Any]] = []
+
+    def mock_emit(
+        chain_id: str | None,
+        parent_span_id: str | None,
+        agent_id: str,
+        macaroon_identifier_hash: str | None,
+        action_requested: str,
+        decision: str,
+        reason: str,
+        human_subject_id: str | None = None,
+        purpose: str | None = None,
+        timestamp: Any = None,
+    ) -> str:
+        span_id = f"span-{len(emitted_spans)}"
+        emitted_spans.append(
+            {
+                "span_id": span_id,
+                "parent_span_id": parent_span_id,
+                "agent_id": agent_id,
+                "action_requested": action_requested,
+                "decision": decision,
+                "reason": reason,
+                "chain_id": chain_id,
+            }
+        )
+        return span_id
+
+    with (
+        patch("memory.behavior._get_firestore_client", return_value=fake_db),
+        patch("gateway.adapters.adk_plugin.emit_span", side_effect=mock_emit),
+    ):
+        # 1. First denial on Chain 1 (out of scope tool call by tool_caller_agent)
+        # Create token with only 'read' scope for tool_caller_agent
+        root_mac1 = issue_root_macaroon(
+            human_subject_id="user1",
+            purpose="task 1",
+            initial_scope={"read"},
+            root_key=test_setup["root_key"],
+            chain_id="chain-1",
+        )
+        mac1 = attenuate(
+            macaroon=root_mac1,
+            to_agent_id="tool_caller_agent",
+            task_required_scope={"read"},
+            registry=test_setup["registry"],
+        )
+        state1 = {
+            "agent_macaroon": mac1.serialize(),
+            "agent_macaroon_span": "s0",
+        }
+        delete_tool = SimpleNamespace(name="delete_record")
+        ctx1 = SimpleNamespace(agent_name="tool_caller_agent", state=state1)
+
+        res1 = await plugin.before_tool_callback(
+            tool=delete_tool,  # type: ignore[arg-type]
+            tool_args={"record_id": "r1"},
+            tool_context=ctx1,  # type: ignore[arg-type]
+        )
+        assert res1 is not None
+        assert res1["error"] == "denied_by_gateway"
+        # Prior violations was 0 -> no flag
+        assert "[Memory Bank flag:" not in emitted_spans[-1]["reason"]
+
+        # 2. Second denial on Chain 2
+        root_mac2 = issue_root_macaroon(
+            human_subject_id="user2",
+            purpose="task 2",
+            initial_scope={"read"},
+            root_key=test_setup["root_key"],
+            chain_id="chain-2",
+        )
+        mac2 = attenuate(
+            macaroon=root_mac2,
+            to_agent_id="tool_caller_agent",
+            task_required_scope={"read"},
+            registry=test_setup["registry"],
+        )
+        state2 = {
+            "agent_macaroon": mac2.serialize(),
+            "agent_macaroon_span": "s1",
+        }
+        ctx2 = SimpleNamespace(agent_name="tool_caller_agent", state=state2)
+
+        res2 = await plugin.before_tool_callback(
+            tool=delete_tool,  # type: ignore[arg-type]
+            tool_args={"record_id": "r2"},
+            tool_context=ctx2,  # type: ignore[arg-type]
+        )
+        assert res2 is not None
+        assert res2["error"] == "denied_by_gateway"
+        # Prior violations was 1 -> no flag
+        assert "[Memory Bank flag:" not in emitted_spans[-1]["reason"]
+
+        # 3. Third denial on Chain 3 (NEGATIVE CONTROL: prior violations is 2 < 3)
+        root_mac3 = issue_root_macaroon(
+            human_subject_id="user3",
+            purpose="task 3",
+            initial_scope={"read"},
+            root_key=test_setup["root_key"],
+            chain_id="chain-3",
+        )
+        mac3 = attenuate(
+            macaroon=root_mac3,
+            to_agent_id="tool_caller_agent",
+            task_required_scope={"read"},
+            registry=test_setup["registry"],
+        )
+        state3 = {
+            "agent_macaroon": mac3.serialize(),
+            "agent_macaroon_span": "s2",
+        }
+        ctx3 = SimpleNamespace(agent_name="tool_caller_agent", state=state3)
+
+        res3 = await plugin.before_tool_callback(
+            tool=delete_tool,  # type: ignore[arg-type]
+            tool_args={"record_id": "r3"},
+            tool_context=ctx3,  # type: ignore[arg-type]
+        )
+        assert res3 is not None
+        assert res3["error"] == "denied_by_gateway"
+        # NEGATIVE CONTROL ASSERTION: exactly 2 prior denials -> still below threshold of 3 -> NO flag
+        assert "[Memory Bank flag:" not in emitted_spans[-1]["reason"]
+
+        # 4. Fourth request on Chain 4 (ACCEPTANCE TEST: exactly 3 prior denials now recorded)
+        root_mac4 = issue_root_macaroon(
+            human_subject_id="user4",
+            purpose="task 4",
+            initial_scope={"read"},
+            root_key=test_setup["root_key"],
+            chain_id="chain-4",
+        )
+        mac4 = attenuate(
+            macaroon=root_mac4,
+            to_agent_id="tool_caller_agent",
+            task_required_scope={"read"},
+            registry=test_setup["registry"],
+        )
+        state4 = {
+            "agent_macaroon": mac4.serialize(),
+            "agent_macaroon_span": "s3",
+        }
+        ctx4 = SimpleNamespace(agent_name="tool_caller_agent", state=state4)
+
+        res4 = await plugin.before_tool_callback(
+            tool=delete_tool,  # type: ignore[arg-type]
+            tool_args={"record_id": "r4"},
+            tool_context=ctx4,  # type: ignore[arg-type]
+        )
+        assert res4 is not None
+        assert res4["error"] == "denied_by_gateway"
+
+        # ACCEPTANCE TEST ASSERTION: 4th request surfaces Memory Bank flag with count 3
+        expected_flag = "[Memory Bank flag: 3 recent denials for tool_caller_agent]"
+        assert expected_flag in emitted_spans[-1]["reason"]
+        # Caller response error dict does NOT leak the flag
+        assert res4["reason"] == "scope caveat violated: requested=delete, allowed=read"
+
+
+@pytest.mark.asyncio
+async def test_gateway_memory_bank_elevated_violations_does_not_override_valid_macaroon(
+    test_setup: dict[str, Any],
+) -> None:
+    """Assert non-negotiable rule: Memory Bank never overrides caveats.
+
+    When an agent has 3+ recorded denials, a subsequent valid in-scope tool call
+    is ALLOWED (returns None), while the audit span includes the Memory Bank flag.
+    """
+    from unittest.mock import patch
+
+    from memory.behavior import record_denial
+
+    plugin = test_setup["plugin"]
+    fake_db = _FakeFirestoreDB()
+    emitted_spans: list[dict[str, Any]] = []
+
+    def mock_emit(
+        chain_id: str | None,
+        parent_span_id: str | None,
+        agent_id: str,
+        macaroon_identifier_hash: str | None,
+        action_requested: str,
+        decision: str,
+        reason: str,
+        human_subject_id: str | None = None,
+        purpose: str | None = None,
+        timestamp: Any = None,
+    ) -> str:
+        span_id = f"span-{len(emitted_spans)}"
+        emitted_spans.append(
+            {
+                "span_id": span_id,
+                "parent_span_id": parent_span_id,
+                "agent_id": agent_id,
+                "action_requested": action_requested,
+                "decision": decision,
+                "reason": reason,
+                "chain_id": chain_id,
+            }
+        )
+        return span_id
+
+    with (
+        patch("memory.behavior._get_firestore_client", return_value=fake_db),
+        patch("gateway.adapters.adk_plugin.emit_span", side_effect=mock_emit),
+    ):
+        # Pre-populate 3 denials for tool_caller_agent
+        record_denial("tool_caller_agent", "chain-old-1", "prior denial 1")
+        record_denial("tool_caller_agent", "chain-old-2", "prior denial 2")
+        record_denial("tool_caller_agent", "chain-old-3", "prior denial 3")
+
+        # Now issue a genuinely valid macaroon with 'read' scope
+        root_mac = issue_root_macaroon(
+            human_subject_id="user_alice",
+            purpose="read valid record",
+            initial_scope={"read"},
+            root_key=test_setup["root_key"],
+            chain_id="chain-valid",
+        )
+        mac = attenuate(
+            macaroon=root_mac,
+            to_agent_id="tool_caller_agent",
+            task_required_scope={"read"},
+            registry=test_setup["registry"],
+        )
+        state = {
+            "agent_macaroon": mac.serialize(),
+            "agent_macaroon_span": "span-parent",
+        }
+        read_tool = SimpleNamespace(name="read_record")
+        tool_ctx = SimpleNamespace(agent_name="tool_caller_agent", state=state)
+
+        # Call before_tool_callback for authorized read_record tool
+        res = await plugin.before_tool_callback(
+            tool=read_tool,  # type: ignore[arg-type]
+            tool_args={"record_id": "rec-001"},
+            tool_context=tool_ctx,  # type: ignore[arg-type]
+        )
+
+        # CRITICAL ASSERTION: Execution is allowed and not blocked
+        assert res is None
+
+        # Audit span was emitted with decision="allow" and includes the flag
+        last_span = emitted_spans[-1]
+        assert last_span["decision"] == "allow"
+        assert last_span["action_requested"] == "read"
+        assert (
+            "[Memory Bank flag: 3 recent denials for tool_caller_agent]"
+            in last_span["reason"]
+        )
+
+
+@pytest.mark.asyncio
+async def test_on_user_message_tightens_scope_when_orchestrator_violations_elevated(
+    test_setup: dict[str, Any],
+) -> None:
+    """Assert on_user_message_callback strips 'delete' from initial scope when orchestrator has >= 3 violations."""
+    from unittest.mock import patch
+
+    from memory.behavior import record_denial
+
+    plugin = test_setup["plugin"]
+    fake_db = _FakeFirestoreDB()
+
+    with patch("memory.behavior._get_firestore_client", return_value=fake_db):
+        # Pre-populate 3 violations for orchestrator_agent
+        record_denial("orchestrator_agent", "chain-old-1", "prior failure 1")
+        record_denial("orchestrator_agent", "chain-old-2", "prior failure 2")
+        record_denial("orchestrator_agent", "chain-old-3", "prior failure 3")
+
+        shared_state: dict[str, Any] = {}
+        session = SimpleNamespace(state=shared_state)
+        invocation_context = SimpleNamespace(
+            user_id="user_admin",
+            invocation_id="inv-chain-tightened",
+            session=session,
+        )
+        user_message = SimpleNamespace(
+            parts=[SimpleNamespace(text="Perform administrative cleanup")]
+        )
+
+        await plugin.on_user_message_callback(
+            invocation_context=invocation_context,  # type: ignore[arg-type]
+            user_message=user_message,  # type: ignore[arg-type]
+        )
+
+        assert "agent_macaroon" in shared_state
+        macaroon = Macaroon.deserialize(shared_state["agent_macaroon"])
+        scope = current_scope(macaroon)
+
+        # 'delete' must have been stripped from initial scope {'read', 'delete', 'fetch'}
+        assert "delete" not in scope
+        assert scope == frozenset({"read", "fetch"})
+
+
+@pytest.mark.asyncio
+async def test_on_user_message_preserves_initial_scope_when_violations_below_threshold(
+    test_setup: dict[str, Any],
+) -> None:
+    """Assert on_user_message_callback preserves full initial scope when orchestrator has < 3 violations."""
+    from unittest.mock import patch
+
+    from memory.behavior import record_denial
+
+    plugin = test_setup["plugin"]
+    fake_db = _FakeFirestoreDB()
+
+    with patch("memory.behavior._get_firestore_client", return_value=fake_db):
+        # Pre-populate only 2 violations for orchestrator_agent (< threshold)
+        record_denial("orchestrator_agent", "chain-old-1", "prior failure 1")
+        record_denial("orchestrator_agent", "chain-old-2", "prior failure 2")
+
+        shared_state: dict[str, Any] = {}
+        session = SimpleNamespace(state=shared_state)
+        invocation_context = SimpleNamespace(
+            user_id="user_admin",
+            invocation_id="inv-chain-full-scope",
+            session=session,
+        )
+        user_message = SimpleNamespace(
+            parts=[SimpleNamespace(text="Perform administrative cleanup")]
+        )
+
+        await plugin.on_user_message_callback(
+            invocation_context=invocation_context,  # type: ignore[arg-type]
+            user_message=user_message,  # type: ignore[arg-type]
+        )
+
+        assert "agent_macaroon" in shared_state
+        macaroon = Macaroon.deserialize(shared_state["agent_macaroon"])
+        scope = current_scope(macaroon)
+
+        # Full initial scope {'read', 'delete', 'fetch'} is preserved
+        assert "delete" in scope
+        assert scope == frozenset({"read", "delete", "fetch"})
