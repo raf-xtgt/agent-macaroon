@@ -20,13 +20,13 @@ def proxy_setup() -> dict[str, Any]:
     registry.register(
         agent_id="orchestrator_agent",
         display_name="Orchestrator",
-        max_scope={"read", "fetch", "delete"},
+        max_scope={"read", "fetch", "delete", "delegate"},
         owner="sec-team",
     )
     registry.register(
         agent_id="researcher_agent",
         display_name="Researcher",
-        max_scope={"read", "fetch"},
+        max_scope={"read", "fetch", "delegate"},
         owner="sec-team",
     )
     registry.register(
@@ -50,9 +50,11 @@ def test_build_default_registry() -> None:
     registry = _build_default_registry()
 
     assert registry.ceiling("orchestrator_agent") == frozenset(
-        {"read", "fetch", "delete"}
+        {"read", "fetch", "delete", "delegate"}
     )
-    assert registry.ceiling("researcher_agent") == frozenset({"read", "fetch"})
+    assert registry.ceiling("researcher_agent") == frozenset(
+        {"read", "fetch", "delegate"}
+    )
     assert registry.ceiling("tool_caller_agent") == frozenset({"read", "delete"})
     assert registry.ceiling("unknown_agent") == frozenset()
 

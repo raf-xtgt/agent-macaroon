@@ -27,13 +27,13 @@ def shared_environment() -> dict[str, Any]:
     registry.register(
         agent_id="orchestrator_agent",
         display_name="Orchestrator",
-        max_scope={"read", "fetch", "delete"},
+        max_scope={"read", "fetch", "delete", "delegate"},
         owner="sec-team",
     )
     registry.register(
         agent_id="researcher_agent",
         display_name="Researcher",
-        max_scope={"read", "fetch"},
+        max_scope={"read", "fetch", "delegate"},
         owner="sec-team",
     )
     registry.register(
@@ -46,7 +46,7 @@ def shared_environment() -> dict[str, Any]:
     plugin = GatewayPlugin(
         root_key=root_key,
         registry=registry,
-        initial_scope={"read", "fetch", "delete"},
+        initial_scope={"read", "fetch", "delete", "delegate"},
     )
     proxy_app = create_proxy_app(root_key=root_key, registry=registry)
     client = TestClient(proxy_app)

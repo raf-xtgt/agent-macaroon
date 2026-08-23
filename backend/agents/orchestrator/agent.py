@@ -47,13 +47,13 @@ registry = AgentRegistry()
 registry.register(
     agent_id="orchestrator_agent",
     display_name="Orchestrator",
-    max_scope={"read", "fetch", "delete"},
+    max_scope={"read", "fetch", "delete", "delegate"},
     owner="platform-team",
 )
 registry.register(
     agent_id="researcher_agent",
     display_name="Researcher",
-    max_scope={"read", "fetch"},
+    max_scope={"read", "fetch", "delegate"},
     owner="research-team",
 )
 registry.register(
@@ -67,7 +67,7 @@ registry.register(
 gateway_plugin = GatewayPlugin(
     root_key=_ROOT_KEY,
     registry=registry,
-    initial_scope={"read", "fetch", "delete"},
+    initial_scope={"read", "fetch", "delete", "delegate"},
 )
 
 # Construct the governed App wrapping the agent chain

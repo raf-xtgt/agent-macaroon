@@ -59,14 +59,16 @@ def test_orchestrator_app_and_plugin_wiring() -> None:
     assert isinstance(plugin, GatewayPlugin)
 
     # Verify initial scope
-    assert plugin._initial_scope == {"read", "fetch", "delete"}
+    assert plugin._initial_scope == {"read", "fetch", "delete", "delegate"}
 
     # Verify registry scope ceilings
     registry = plugin._registry
     assert registry.ceiling("orchestrator_agent") == frozenset(
-        {"read", "fetch", "delete"}
+        {"read", "fetch", "delete", "delegate"}
     )
-    assert registry.ceiling("researcher_agent") == frozenset({"read", "fetch"})
+    assert registry.ceiling("researcher_agent") == frozenset(
+        {"read", "fetch", "delegate"}
+    )
     assert registry.ceiling("tool_caller_agent") == frozenset({"read", "delete"})
 
 

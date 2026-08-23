@@ -31,6 +31,7 @@ TOOL_ACTION_MAP: dict[str, str] = {
     "read_record": "read",
     "delete_record": "delete",
     "fetch_document": "fetch",
+    "transfer_to_agent": "delegate",
 }
 
 MEMORY_VIOLATION_THRESHOLD: int = 3

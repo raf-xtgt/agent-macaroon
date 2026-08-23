@@ -2,6 +2,7 @@
 
 from types import SimpleNamespace
 from typing import Any
+from unittest.mock import MagicMock, patch
 
 import pytest
 from google.genai import types
@@ -13,22 +14,102 @@ from macaroon.issue import issue_root_macaroon, parse_identifier
 from registry.agents_registry import AgentRegistry
 
 
+class _FakeDocRef:
+    def __init__(
+        self,
+        doc_id: str,
+        store: dict[str, list[dict[str, Any]]],
+        agent_id: str,
+    ) -> None:
+        self.doc_id = doc_id
+        self.store = store
+        self.agent_id = agent_id
+
+    def set(self, data: dict[str, Any]) -> None:
+        self.store.setdefault(self.agent_id, []).append(data)
+
+
+class _FakeRecordsQuery:
+    def __init__(
+        self,
+        agent_id: str,
+        store: dict[str, list[dict[str, Any]]],
+        cutoff: Any = None,
+    ) -> None:
+        self.agent_id = agent_id
+        self.store = store
+        self.cutoff = cutoff
+
+    def document(self, doc_id: str) -> _FakeDocRef:
+        return _FakeDocRef(doc_id, self.store, self.agent_id)
+
+    def where(
+        self,
+        field: str | None = None,
+        op: str | None = None,
+        value: Any = None,
+        filter: Any = None,
+    ) -> "_FakeRecordsQuery":
+        cutoff = value
+        if filter is not None:
+            cutoff = getattr(filter, "value", None)
+        return _FakeRecordsQuery(self.agent_id, self.store, cutoff=cutoff)
+
+    def stream(self) -> Any:
+        records = self.store.get(self.agent_id, [])
+        for r in records:
+            if self.cutoff is not None and r.get("timestamp") < self.cutoff:
+                continue
+            doc = MagicMock()
+            doc.to_dict.return_value = r
+            yield doc
+
+
+class _FakeAgentDoc:
+    def __init__(self, agent_id: str, store: dict[str, list[dict[str, Any]]]) -> None:
+        self.agent_id = agent_id
+        self.store = store
+
+    def collection(self, name: str) -> _FakeRecordsQuery:
+        if name == "records":
+            return _FakeRecordsQuery(self.agent_id, self.store)
+        raise ValueError(f"Unknown subcollection: {name}")
+
+
+class _FakeMemoryCollection:
+    def __init__(self, store: dict[str, list[dict[str, Any]]]) -> None:
+        self.store = store
+
+    def document(self, agent_id: str) -> _FakeAgentDoc:
+        return _FakeAgentDoc(agent_id, self.store)
+
+
+class _FakeFirestoreDB:
+    def __init__(self) -> None:
+        self.store: dict[str, list[dict[str, Any]]] = {}
+
+    def collection(self, name: str) -> Any:
+        if name == "agent_memory":
+            return _FakeMemoryCollection(self.store)
+        raise ValueError(f"Unknown collection: {name}")
+
+
 @pytest.fixture
 def test_setup() -> dict[str, Any]:
     """Fixture providing initialized root key, registry, initial scope, and plugin."""
     root_key = b"test-secret-root-key"
-    initial_scope = {"read", "delete", "fetch"}
+    initial_scope = {"read", "delete", "fetch", "delegate"}
     registry = AgentRegistry()
     registry.register(
         agent_id="orchestrator_agent",
         display_name="Orchestrator Root",
-        max_scope={"read", "delete", "fetch"},
+        max_scope={"read", "delete", "fetch", "delegate"},
         owner="sec-team",
     )
     registry.register(
         agent_id="researcher_agent",
         display_name="Researcher Specialist",
-        max_scope={"read", "fetch"},
+        max_scope={"read", "fetch", "delegate"},
         owner="sec-team",
     )
     registry.register(
@@ -72,10 +153,12 @@ async def test_on_user_message_issues_root_macaroon(
         parts=[SimpleNamespace(text="Retrieve confidential financial logs")]
     )
 
-    res = await plugin.on_user_message_callback(
-        invocation_context=invocation_context,  # type: ignore[arg-type]
-        user_message=user_message,  # type: ignore[arg-type]
-    )
+    fake_db = _FakeFirestoreDB()
+    with patch("memory.behavior._get_firestore_client", return_value=fake_db):
+        res = await plugin.on_user_message_callback(
+            invocation_context=invocation_context,  # type: ignore[arg-type]
+            user_message=user_message,  # type: ignore[arg-type]
+        )
 
     assert res is None
     assert "agent_macaroon" in state_dict
@@ -86,7 +169,7 @@ async def test_on_user_message_issues_root_macaroon(
     assert provenance["human_subject_id"] == "user_charlie"
     assert provenance["purpose"] == "Retrieve confidential financial logs"
     assert provenance["chain_id"] == "inv-chain-777"
-    assert current_scope(macaroon) == frozenset({"read", "delete", "fetch"})
+    assert current_scope(macaroon) == frozenset({"read", "delete", "fetch", "delegate"})
 
 
 @pytest.mark.asyncio
@@ -104,10 +187,12 @@ async def test_on_user_message_fallback_purpose_on_empty_content(
     )
     user_message = SimpleNamespace(parts=[])
 
-    res = await plugin.on_user_message_callback(
-        invocation_context=invocation_context,  # type: ignore[arg-type]
-        user_message=user_message,  # type: ignore[arg-type]
-    )
+    fake_db = _FakeFirestoreDB()
+    with patch("memory.behavior._get_firestore_client", return_value=fake_db):
+        res = await plugin.on_user_message_callback(
+            invocation_context=invocation_context,  # type: ignore[arg-type]
+            user_message=user_message,  # type: ignore[arg-type]
+        )
 
     assert res is None
     assert "agent_macaroon" in state_dict
@@ -132,10 +217,12 @@ async def test_on_user_message_initial_scope_match(
     )
     user_message = SimpleNamespace(parts=[SimpleNamespace(text="Do task")])
 
-    await plugin.on_user_message_callback(
-        invocation_context=invocation_context,  # type: ignore[arg-type]
-        user_message=user_message,  # type: ignore[arg-type]
-    )
+    fake_db = _FakeFirestoreDB()
+    with patch("memory.behavior._get_firestore_client", return_value=fake_db):
+        await plugin.on_user_message_callback(
+            invocation_context=invocation_context,  # type: ignore[arg-type]
+            user_message=user_message,  # type: ignore[arg-type]
+        )
 
     macaroon = Macaroon.deserialize(state_dict["agent_macaroon"])
     assert current_scope(macaroon) == frozenset(test_setup["initial_scope"])
@@ -157,7 +244,7 @@ async def test_before_agent_entry_agent_attenuation(
     root = issue_root_macaroon(
         human_subject_id="user_alice",
         purpose="Entry task",
-        initial_scope={"read", "delete", "fetch"},
+        initial_scope={"read", "delete", "fetch", "delegate"},
         root_key=root_key,
     )
     state = {"agent_macaroon": root.serialize()}
@@ -177,7 +264,9 @@ async def test_before_agent_entry_agent_attenuation(
         for c in attenuated.first_party_caveats()
     ]
     assert any(c == "agent=orchestrator_agent" for c in caveats)
-    assert current_scope(attenuated) == frozenset({"read", "delete", "fetch"})
+    assert current_scope(attenuated) == frozenset(
+        {"read", "delete", "fetch", "delegate"}
+    )
 
 
 @pytest.mark.asyncio
@@ -193,13 +282,13 @@ async def test_before_agent_delegation_hop_narrows_scope(
     root = issue_root_macaroon(
         human_subject_id="user_alice",
         purpose="Task",
-        initial_scope={"read", "delete", "fetch"},
+        initial_scope={"read", "delete", "fetch", "delegate"},
         root_key=root_key,
     )
     orch_macaroon = attenuate(
         macaroon=root,
         to_agent_id="orchestrator_agent",
-        task_required_scope={"read", "delete", "fetch"},
+        task_required_scope={"read", "delete", "fetch", "delegate"},
         registry=registry,
     )
 
@@ -214,8 +303,8 @@ async def test_before_agent_delegation_hop_narrows_scope(
 
     assert res is None
     attenuated = Macaroon.deserialize(state["agent_macaroon"])
-    # researcher ceiling is {"read", "fetch"}, so "delete" is filtered out
-    assert current_scope(attenuated) == frozenset({"read", "fetch"})
+    # researcher ceiling is {"read", "fetch", "delegate"}, so "delete" is filtered out
+    assert current_scope(attenuated) == frozenset({"read", "fetch", "delegate"})
 
 
 @pytest.mark.asyncio
@@ -969,88 +1058,6 @@ async def test_gateway_parent_span_chain_structure(
 # ============================================================================
 
 
-class _FakeDocRef:
-    def __init__(
-        self,
-        doc_id: str,
-        store: dict[str, list[dict[str, Any]]],
-        agent_id: str,
-    ) -> None:
-        self.doc_id = doc_id
-        self.store = store
-        self.agent_id = agent_id
-
-    def set(self, data: dict[str, Any]) -> None:
-        self.store.setdefault(self.agent_id, []).append(data)
-
-
-class _FakeRecordsQuery:
-    def __init__(
-        self,
-        agent_id: str,
-        store: dict[str, list[dict[str, Any]]],
-        cutoff: Any = None,
-    ) -> None:
-        self.agent_id = agent_id
-        self.store = store
-        self.cutoff = cutoff
-
-    def document(self, doc_id: str) -> _FakeDocRef:
-        return _FakeDocRef(doc_id, self.store, self.agent_id)
-
-    def where(
-        self,
-        field: str | None = None,
-        op: str | None = None,
-        value: Any = None,
-        filter: Any = None,
-    ) -> "_FakeRecordsQuery":
-        cutoff = value
-        if filter is not None:
-            cutoff = getattr(filter, "value", None)
-        return _FakeRecordsQuery(self.agent_id, self.store, cutoff=cutoff)
-
-    def stream(self) -> Any:
-        from unittest.mock import MagicMock
-
-        records = self.store.get(self.agent_id, [])
-        for r in records:
-            if self.cutoff is not None and r.get("timestamp") < self.cutoff:
-                continue
-            doc = MagicMock()
-            doc.to_dict.return_value = r
-            yield doc
-
-
-class _FakeAgentDoc:
-    def __init__(self, agent_id: str, store: dict[str, list[dict[str, Any]]]) -> None:
-        self.agent_id = agent_id
-        self.store = store
-
-    def collection(self, name: str) -> _FakeRecordsQuery:
-        if name == "records":
-            return _FakeRecordsQuery(self.agent_id, self.store)
-        raise ValueError(f"Unknown subcollection: {name}")
-
-
-class _FakeMemoryCollection:
-    def __init__(self, store: dict[str, list[dict[str, Any]]]) -> None:
-        self.store = store
-
-    def document(self, agent_id: str) -> _FakeAgentDoc:
-        return _FakeAgentDoc(agent_id, self.store)
-
-
-class _FakeFirestoreDB:
-    def __init__(self) -> None:
-        self.store: dict[str, list[dict[str, Any]]] = {}
-
-    def collection(self, name: str) -> Any:
-        if name == "agent_memory":
-            return _FakeMemoryCollection(self.store)
-        raise ValueError(f"Unknown collection: {name}")
-
-
 @pytest.mark.asyncio
 async def test_gateway_memory_bank_violation_threshold_flag_in_span_reason(
     test_setup: dict[str, Any],
@@ -1353,9 +1360,9 @@ async def test_on_user_message_tightens_scope_when_orchestrator_violations_eleva
         macaroon = Macaroon.deserialize(shared_state["agent_macaroon"])
         scope = current_scope(macaroon)
 
-        # 'delete' must have been stripped from initial scope {'read', 'delete', 'fetch'}
+        # 'delete' must have been stripped from initial scope {'read', 'delete', 'fetch', 'delegate'}
         assert "delete" not in scope
-        assert scope == frozenset({"read", "fetch"})
+        assert scope == frozenset({"read", "fetch", "delegate"})
 
 
 @pytest.mark.asyncio
@@ -1395,6 +1402,180 @@ async def test_on_user_message_preserves_initial_scope_when_violations_below_thr
         macaroon = Macaroon.deserialize(shared_state["agent_macaroon"])
         scope = current_scope(macaroon)
 
-        # Full initial scope {'read', 'delete', 'fetch'} is preserved
+        # Full initial scope {'read', 'delete', 'fetch', 'delegate'} is preserved
         assert "delete" in scope
-        assert scope == frozenset({"read", "delete", "fetch"})
+        assert scope == frozenset({"read", "delete", "fetch", "delegate"})
+
+
+# ============================================================================
+# transfer_to_agent Evaluation Tests (Part B: Checked Action, No Bypass)
+# ============================================================================
+
+
+@pytest.mark.asyncio
+async def test_transfer_to_agent_allowed_when_authorized(
+    test_setup: dict[str, Any],
+) -> None:
+    """Assert transfer_to_agent evaluates to ALLOW when presenting agent has 'delegate' in ceiling and token."""
+    root_key = test_setup["root_key"]
+    registry = test_setup["registry"]
+    plugin = test_setup["plugin"]
+
+    # Issue root token with full initial scope (including 'delegate')
+    root = issue_root_macaroon(
+        human_subject_id="user_alice",
+        purpose="Delegation task",
+        initial_scope={"read", "fetch", "delete", "delegate"},
+        root_key=root_key,
+        chain_id="chain-delegate-101",
+    )
+    # Attenuate to orchestrator_agent (whose ceiling includes 'delegate')
+    macaroon = attenuate(
+        macaroon=root,
+        to_agent_id="orchestrator_agent",
+        task_required_scope={"read", "fetch", "delete", "delegate"},
+        registry=registry,
+    )
+
+    state = {"agent_macaroon": macaroon.serialize(), "agent_macaroon_span": "span-root"}
+    tool_context = SimpleNamespace(agent_name="orchestrator_agent", state=state)
+    tool = SimpleNamespace(name="transfer_to_agent")
+
+    emitted_spans: list[dict[str, Any]] = []
+
+    def mock_emit(**kwargs: Any) -> str:
+        emitted_spans.append(kwargs)
+        return f"span-{len(emitted_spans)}"
+
+    with (
+        patch("gateway.adapters.adk_plugin.emit_span", side_effect=mock_emit),
+        patch("memory.behavior._get_firestore_client", return_value=_FakeFirestoreDB()),
+    ):
+        result = await plugin.before_tool_callback(
+            tool=tool,  # type: ignore[arg-type]
+            tool_args={"agent_name": "researcher_agent"},
+            tool_context=tool_context,  # type: ignore[arg-type]
+        )
+
+    # Must return None (allowed by evaluate(), not by short-circuit bypass)
+    assert result is None
+
+    # Verify audit span recorded 'delegate' action and 'allow' decision
+    assert len(emitted_spans) == 1
+    span = emitted_spans[0]
+    assert span["action_requested"] == "delegate"
+    assert span["decision"] == "allow"
+    assert span["agent_id"] == "orchestrator_agent"
+    assert span["chain_id"] == "chain-delegate-101"
+
+
+@pytest.mark.asyncio
+async def test_transfer_to_agent_denied_when_agent_ceiling_lacks_delegate(
+    test_setup: dict[str, Any],
+) -> None:
+    """Assert transfer_to_agent evaluates to DENY when presenting agent's ceiling lacks 'delegate'."""
+    root_key = test_setup["root_key"]
+    plugin = test_setup["plugin"]
+
+    # Issue root token with 'delegate'
+    root = issue_root_macaroon(
+        human_subject_id="user_alice",
+        purpose="Delegation attempt from leaf",
+        initial_scope={"read", "delegate"},
+        root_key=root_key,
+        chain_id="chain-delegate-202",
+    )
+    # Presenting agent is tool_caller_agent (whose ceiling is {"read", "delete"} - NO 'delegate')
+    # Even if an unattenuated or maliciously presented token contains 'delegate', ceiling check denies it
+    state = {"agent_macaroon": root.serialize()}
+    tool_context = SimpleNamespace(agent_name="tool_caller_agent", state=state)
+    tool = SimpleNamespace(name="transfer_to_agent")
+
+    emitted_spans: list[dict[str, Any]] = []
+
+    def mock_emit(**kwargs: Any) -> str:
+        emitted_spans.append(kwargs)
+        return f"span-{len(emitted_spans)}"
+
+    with (
+        patch("gateway.adapters.adk_plugin.emit_span", side_effect=mock_emit),
+        patch("memory.behavior._get_firestore_client", return_value=_FakeFirestoreDB()),
+    ):
+        result = await plugin.before_tool_callback(
+            tool=tool,  # type: ignore[arg-type]
+            tool_args={"agent_name": "other_agent"},
+            tool_context=tool_context,  # type: ignore[arg-type]
+        )
+
+    # Must be denied
+    assert result is not None
+    assert result.get("error") == "denied_by_gateway"
+    assert "ceiling exceeded" in result.get("reason", "")
+    assert "requested=delegate" in result.get("reason", "")
+
+    # Verify audit span recorded 'delegate' action and 'deny' decision
+    assert len(emitted_spans) == 1
+    span = emitted_spans[0]
+    assert span["action_requested"] == "delegate"
+    assert span["decision"] == "deny"
+    assert span["agent_id"] == "tool_caller_agent"
+
+
+@pytest.mark.asyncio
+async def test_transfer_to_agent_denied_when_macaroon_scope_lacks_delegate(
+    test_setup: dict[str, Any],
+) -> None:
+    """Assert transfer_to_agent evaluates to DENY when presenting macaroon lacks 'delegate' in scope."""
+    root_key = test_setup["root_key"]
+    registry = test_setup["registry"]
+    plugin = test_setup["plugin"]
+
+    # Issue root token with only 'read' (lacks 'delegate')
+    root = issue_root_macaroon(
+        human_subject_id="user_alice",
+        purpose="Read only task",
+        initial_scope={"read"},
+        root_key=root_key,
+        chain_id="chain-delegate-303",
+    )
+    # Attenuate to researcher_agent
+    macaroon = attenuate(
+        macaroon=root,
+        to_agent_id="researcher_agent",
+        task_required_scope={"read"},
+        registry=registry,
+    )
+
+    state = {"agent_macaroon": macaroon.serialize()}
+    # researcher_agent has 'delegate' in ceiling, but the macaroon lacks 'delegate'
+    tool_context = SimpleNamespace(agent_name="researcher_agent", state=state)
+    tool = SimpleNamespace(name="transfer_to_agent")
+
+    emitted_spans: list[dict[str, Any]] = []
+
+    def mock_emit(**kwargs: Any) -> str:
+        emitted_spans.append(kwargs)
+        return f"span-{len(emitted_spans)}"
+
+    with (
+        patch("gateway.adapters.adk_plugin.emit_span", side_effect=mock_emit),
+        patch("memory.behavior._get_firestore_client", return_value=_FakeFirestoreDB()),
+    ):
+        result = await plugin.before_tool_callback(
+            tool=tool,  # type: ignore[arg-type]
+            tool_args={"agent_name": "tool_caller_agent"},
+            tool_context=tool_context,  # type: ignore[arg-type]
+        )
+
+    # Must be denied
+    assert result is not None
+    assert result.get("error") == "denied_by_gateway"
+    assert "scope caveat violated" in result.get("reason", "")
+    assert "requested=delegate" in result.get("reason", "")
+
+    # Verify audit span recorded 'delegate' action and 'deny' decision
+    assert len(emitted_spans) == 1
+    span = emitted_spans[0]
+    assert span["action_requested"] == "delegate"
+    assert span["decision"] == "deny"
+    assert span["agent_id"] == "researcher_agent"

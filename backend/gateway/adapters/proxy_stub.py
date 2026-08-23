@@ -82,13 +82,13 @@ def _build_default_registry() -> AgentRegistry:
     registry.register(
         agent_id="orchestrator_agent",
         display_name="Orchestrator",
-        max_scope={"read", "fetch", "delete"},
+        max_scope={"read", "fetch", "delete", "delegate"},
         owner="platform-team",
     )
     registry.register(
         agent_id="researcher_agent",
         display_name="Researcher",
-        max_scope={"read", "fetch"},
+        max_scope={"read", "fetch", "delegate"},
         owner="research-team",
     )
     registry.register(
