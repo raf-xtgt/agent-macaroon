@@ -7,8 +7,8 @@ from google.adk.cli.fast_api import get_fast_api_app
 
 from audit.api import router as audit_router
 
-# Alias any pre-imported agents.* packages so ADK's AgentLoader reuses the same module instances
-for agent_pkg in ("orchestrator", "researcher", "tool_caller"):
+# Alias pre-imported agents.* packages so ADK's AgentLoader reuses module instances.
+for agent_pkg in ("orchestrator", "researcher", "tool_caller", "governed"):
     if f"agents.{agent_pkg}" in sys.modules and agent_pkg not in sys.modules:
         sys.modules[agent_pkg] = sys.modules[f"agents.{agent_pkg}"]
     if (

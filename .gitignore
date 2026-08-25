@@ -147,3 +147,4 @@ __pycache__
 creds.json
 .pytest_cache
 .ruff_cache
+.kiro

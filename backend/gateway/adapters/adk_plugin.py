@@ -27,7 +27,7 @@ from macaroon.verify import verify_signature
 from memory.behavior import recent_violation_count, record_denial
 from registry.agents_registry import AgentRegistry
 
-TOOL_ACTION_MAP: dict[str, str] = {
+_DEFAULT_TOOL_ACTION_MAP: dict[str, str] = {
     "read_record": "read",
     "delete_record": "delete",
     "fetch_document": "fetch",
@@ -51,6 +51,9 @@ class GatewayPlugin(BasePlugin):
         registry: AgentRegistry,
         initial_scope: set[str],
         name: str = "gateway_plugin",
+        tool_action_map: dict[str, str] | None = None,
+        entry_agent_id: str = "orchestrator_agent",
+        max_depth: int = 5,
     ) -> None:
         """Initialize the GatewayPlugin.
 
@@ -61,11 +64,32 @@ class GatewayPlugin(BasePlugin):
                 for every task (deliberate simplification: fixed grant per session
                 without NLU task parsing).
             name: Unique name for this plugin instance.
+            tool_action_map: Maps tool function names to abstract action verbs.
+                Defaults to the built-in 3-agent demo map. Override when governing
+                external fleets (e.g., global-kyc-agent).
+            entry_agent_id: Name of the root/entry agent for the governed fleet.
+            max_depth: Maximum delegation depth for minted macaroons.
         """
         super().__init__(name=name)
         self._root_key = root_key
         self._registry = registry
         self._initial_scope = initial_scope
+        self._tool_action_map = tool_action_map or _DEFAULT_TOOL_ACTION_MAP
+        self._entry_agent_id = entry_agent_id
+        self._max_depth = max_depth
+
+    def _resolve_action(self, tool_name: str) -> str:
+        """Map a tool name to an action verb via the configured map.
+
+        ADK generates delegation tools named ``transfer_to_<agent_name>``; these
+        are matched by prefix and mapped to ``"delegate"``.
+        """
+        action = self._tool_action_map.get(tool_name)
+        if action is not None:
+            return action
+        if tool_name.startswith("transfer_to_"):
+            return "delegate"
+        return f"unknown_tool:{tool_name}"
 
     async def on_user_message_callback(
         self,
@@ -105,7 +129,7 @@ class GatewayPlugin(BasePlugin):
             )
 
             # F7: Check issuing agent's recent violation history to tighten initial scope if elevated
-            violation_count = recent_violation_count("orchestrator_agent")
+            violation_count = recent_violation_count(self._entry_agent_id)
             issuance_scope = self._initial_scope
             if (
                 violation_count >= MEMORY_VIOLATION_THRESHOLD
@@ -119,6 +143,7 @@ class GatewayPlugin(BasePlugin):
                 initial_scope=issuance_scope,
                 root_key=self._root_key,
                 chain_id=invocation_id,
+                max_depth=self._max_depth,
             )
 
             raw_id = macaroon.identifier
@@ -128,7 +153,7 @@ class GatewayPlugin(BasePlugin):
             span_id = emit_span(
                 chain_id=invocation_id,
                 parent_span_id=None,
-                agent_id="orchestrator_agent",
+                agent_id=self._entry_agent_id,
                 macaroon_identifier_hash=macaroon_hash,
                 action_requested="issue_macaroon",
                 decision="allow",
@@ -372,7 +397,7 @@ class GatewayPlugin(BasePlugin):
             macaroon = None
 
         tool_name = getattr(tool, "name", "")
-        requested_action = TOOL_ACTION_MAP.get(tool_name, f"unknown_tool:{tool_name}")
+        requested_action = self._resolve_action(tool_name)
         presenting_agent_id = getattr(tool_context, "agent_name", "unknown")
 
         decision = evaluate(

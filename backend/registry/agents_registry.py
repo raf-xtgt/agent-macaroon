@@ -1,7 +1,10 @@
 """Scope-ceiling lookups and agent registration (in-memory backend for MVP)."""
 
+from __future__ import annotations
+
 from dataclasses import dataclass
 from datetime import datetime, timezone
+from typing import Any
 
 
 @dataclass(frozen=True)
@@ -90,3 +93,72 @@ class AgentRegistry:
                 status="retired",
                 created_at=record.created_at,
             )
+
+    def register_bulk(
+        self,
+        agents_config: dict[str, set[str]],
+        owner: str = "auto-derived",
+    ) -> None:
+        """Register multiple agents at once from a name-to-scope mapping."""
+        for agent_id, scope in agents_config.items():
+            self.register(
+                agent_id=agent_id,
+                display_name=agent_id,
+                max_scope=scope,
+                owner=owner,
+            )
+
+    def tighten_ceiling(self, agent_id: str, remove_verbs: set[str]) -> None:
+        """Remove action verbs from an active agent's ceiling (immunization)."""
+        record = self._records.get(agent_id)
+        if record is None or record.status != "active":
+            return
+        new_scope = record.max_scope - frozenset(remove_verbs)
+        self._records[agent_id] = AgentRecord(
+            display_name=record.display_name,
+            max_scope=new_scope,
+            owner=record.owner,
+            status=record.status,
+            created_at=record.created_at,
+        )
+
+    @staticmethod
+    def derive_from_agent_tree(
+        root_agent: Any,
+        tool_action_map: dict[str, str],
+    ) -> dict[str, set[str]]:
+        """Walk an ADK agent hierarchy and derive scope ceilings from tools.
+
+        Returns a dict mapping agent_id to the set of action verbs it needs,
+        derived from its tools and whether it has sub-agents (adds "delegate").
+        """
+        config: dict[str, set[str]] = {}
+
+        def _walk(agent: Any) -> None:
+            name = getattr(agent, "name", None)
+            if name is None:
+                return
+
+            verbs: set[str] = set()
+
+            tools = getattr(agent, "tools", None) or []
+            for tool in tools:
+                tool_name = getattr(tool, "name", None) or getattr(
+                    tool, "__name__", None
+                )
+                if tool_name:
+                    action = tool_action_map.get(tool_name)
+                    if action:
+                        verbs.add(action)
+
+            sub_agents = getattr(agent, "sub_agents", None) or []
+            if sub_agents:
+                verbs.add("delegate")
+
+            config[name] = verbs
+
+            for sub in sub_agents:
+                _walk(sub)
+
+        _walk(root_agent)
+        return config
