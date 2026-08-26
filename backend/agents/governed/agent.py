@@ -76,6 +76,7 @@ def _load_custom_tool_map() -> dict[str, str] | None:
     """Load a user-supplied tool map if it exists, else return None."""
     try:
         from .tool_map import TOOL_ACTION_MAP
+
         return TOOL_ACTION_MAP
     except (ImportError, AttributeError):
         return None
@@ -85,6 +86,7 @@ def _load_custom_initial_scope() -> set[str] | None:
     """Load a user-supplied initial scope if it exists, else return None."""
     try:
         from .tool_map import INITIAL_SCOPE
+
         return INITIAL_SCOPE
     except (ImportError, AttributeError):
         return None
@@ -107,9 +109,7 @@ if _fleet_parent not in sys.path:
 _fleet_module = importlib.import_module(f"{_fleet_package}.agent")
 _fleet_root_agent = getattr(_fleet_module, "root_agent", None)
 if _fleet_root_agent is None:
-    raise RuntimeError(
-        f"Package {_fleet_package}.agent does not export root_agent."
-    )
+    raise RuntimeError(f"Package {_fleet_package}.agent does not export root_agent.")
 
 # --- Configuration ---
 
@@ -124,9 +124,8 @@ if _custom_tool_map is not None:
     _tool_map = _custom_tool_map
 else:
     _tool_map = {}
-    _derived_config = AgentRegistry.derive_from_agent_tree(
-        _fleet_root_agent, {}
-    )
+    _derived_config = AgentRegistry.derive_from_agent_tree(_fleet_root_agent, {})
+
     # derive_from_agent_tree with empty map gives {} verbs for tools
     # but "delegate" for agents with sub_agents.
     # Build a default map: walk all tools and map them to "read".

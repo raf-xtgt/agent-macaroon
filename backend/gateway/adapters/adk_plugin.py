@@ -14,6 +14,7 @@ from google.genai import types
 from pymacaroons import Macaroon
 from pymacaroons.exceptions import MacaroonException
 
+from armor.immunize import immunize_from_quarantine
 from armor.screen import screen_text
 from audit.trace import emit_span
 from gateway.policy import evaluate
@@ -489,6 +490,17 @@ class GatewayPlugin(BasePlugin):
                         f"potential prompt injection detected — pattern: {patterns_str}]"
                     )
                     has_quarantine = True
+
+                    # Immunize: register a runtime pattern to catch similar payloads earlier
+                    try:
+                        immunize_from_quarantine(
+                            quarantined_text=value,
+                            agent_id=getattr(tool_context, "agent_name", "unknown"),
+                            registry=self._registry,
+                            tighten_verbs=None,
+                        )
+                    except Exception:  # noqa: BLE001, S110
+                        pass
                 else:
                     quarantined[key] = value
             else:

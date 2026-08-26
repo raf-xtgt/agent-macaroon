@@ -5,6 +5,7 @@ from pathlib import Path
 
 from google.adk.cli.fast_api import get_fast_api_app
 
+from armor.api import router as armor_router
 from audit.api import router as audit_router
 from red_team.api import router as red_team_router
 
@@ -23,3 +24,4 @@ _AGENTS_DIR = str(Path(__file__).resolve().parent / "agents")
 app = get_fast_api_app(agents_dir=_AGENTS_DIR, web=False)
 app.include_router(audit_router)
 app.include_router(red_team_router)
+app.include_router(armor_router)
