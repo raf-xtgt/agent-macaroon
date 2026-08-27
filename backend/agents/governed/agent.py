@@ -165,7 +165,16 @@ gateway_plugin = GatewayPlugin(
     tool_action_map=_tool_map,
     entry_agent_id=_entry_agent_id,
     max_depth=8,
+    enable_model_armor=True,
 )
+
+# Initialize Model Armor template (creates if not exists)
+try:
+    from armor.model_armor import ensure_template_exists
+
+    ensure_template_exists()
+except Exception:  # noqa: BLE001, S110
+    pass  # Model Armor is optional; regex + gateway scope check are the primary defense
 
 root_agent = _fleet_root_agent
 

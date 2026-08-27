@@ -15,6 +15,7 @@ from pymacaroons import Macaroon
 from pymacaroons.exceptions import MacaroonException
 
 from armor.immunize import immunize_from_quarantine
+from armor.model_armor import screen_with_model_armor
 from armor.screen import screen_text
 from audit.trace import emit_span
 from gateway.policy import evaluate
@@ -55,6 +56,7 @@ class GatewayPlugin(BasePlugin):
         tool_action_map: dict[str, str] | None = None,
         entry_agent_id: str = "orchestrator_agent",
         max_depth: int = 5,
+        enable_model_armor: bool = False,
     ) -> None:
         """Initialize the GatewayPlugin.
 
@@ -70,6 +72,7 @@ class GatewayPlugin(BasePlugin):
                 external fleets (e.g., global-kyc-agent).
             entry_agent_id: Name of the root/entry agent for the governed fleet.
             max_depth: Maximum delegation depth for minted macaroons.
+            enable_model_armor: Whether to enable deep screening via Google Model Armor API.
         """
         super().__init__(name=name)
         self._root_key = root_key
@@ -78,6 +81,7 @@ class GatewayPlugin(BasePlugin):
         self._tool_action_map = tool_action_map or _DEFAULT_TOOL_ACTION_MAP
         self._entry_agent_id = entry_agent_id
         self._max_depth = max_depth
+        self._enable_model_armor = enable_model_armor
 
     def _resolve_action(self, tool_name: str) -> str:
         """Map a tool name to an action verb via the configured map.
@@ -479,6 +483,7 @@ class GatewayPlugin(BasePlugin):
 
         quarantined: dict[str, Any] = {}
         has_quarantine = False
+        ma_confidences: list[str] = []
 
         for key, value in result.items():
             if isinstance(value, str):
@@ -490,6 +495,22 @@ class GatewayPlugin(BasePlugin):
                         f"potential prompt injection detected — pattern: {patterns_str}]"
                     )
                     has_quarantine = True
+
+                    # Also call Model Armor for confidence data if enabled
+                    if self._enable_model_armor:
+                        try:
+                            ma_result = screen_with_model_armor(value)
+                            if ma_result.flagged:
+                                quarantined[key] += (
+                                    f" [Model Armor: PI/jailbreak={ma_result.pi_and_jailbreak_detected}, "
+                                    f"confidence={ma_result.confidence_level}]"
+                                )
+                                if ma_result.confidence_level:
+                                    ma_confidences.append(
+                                        f"confidence={ma_result.confidence_level}"
+                                    )
+                        except Exception:  # noqa: BLE001, S110
+                            pass
 
                     # Immunize: register a runtime pattern to catch similar payloads earlier
                     try:
@@ -503,6 +524,36 @@ class GatewayPlugin(BasePlugin):
                         pass
                 else:
                     quarantined[key] = value
+
+                    # Model Armor deep screen on content that passed regex
+                    if self._enable_model_armor:
+                        try:
+                            ma_result = screen_with_model_armor(value)
+                            if ma_result.flagged:
+                                quarantined[key] = (
+                                    f"[CONTENT QUARANTINED BY MODEL ARMOR (ML): "
+                                    f"PI/jailbreak detected — confidence: {ma_result.confidence_level}]"
+                                )
+                                has_quarantine = True
+                                if ma_result.confidence_level:
+                                    ma_confidences.append(
+                                        f"confidence={ma_result.confidence_level}"
+                                    )
+
+                                # Immunize from the ML-detected content too
+                                try:
+                                    immunize_from_quarantine(
+                                        quarantined_text=value,
+                                        agent_id=getattr(
+                                            tool_context, "agent_name", "unknown"
+                                        ),
+                                        registry=self._registry,
+                                        tighten_verbs=None,
+                                    )
+                                except Exception:  # noqa: BLE001, S110
+                                    pass
+                        except Exception:  # noqa: BLE001, S110
+                            pass
             else:
                 quarantined[key] = value
 
@@ -550,6 +601,9 @@ class GatewayPlugin(BasePlugin):
 
         if has_quarantine:
             quarantined_keys = sorted(quarantined.keys())
+            span_reason = f"quarantined fields: {quarantined_keys}"
+            if ma_confidences:
+                span_reason += f" [Model Armor: {', '.join(ma_confidences)}]"
             emit_span(
                 chain_id=chain_id,
                 parent_span_id=parent_span_id,
@@ -557,7 +611,7 @@ class GatewayPlugin(BasePlugin):
                 macaroon_identifier_hash=macaroon_hash,
                 action_requested=f"screen:{tool_name}",
                 decision="deny",
-                reason=f"quarantined fields: {quarantined_keys}",
+                reason=span_reason,
             )
             return quarantined
 

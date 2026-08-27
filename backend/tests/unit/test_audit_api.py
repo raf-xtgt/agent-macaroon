@@ -101,7 +101,7 @@ def test_merged_app_serves_orchestrator_agent() -> None:
 
 
 def test_armor_status_endpoint() -> None:
-    """Assert /armor/status returns active pattern count and runtime patterns."""
+    """Assert /armor/status returns active pattern count, runtime patterns, and model_armor config."""
     response = client.get("/armor/status")
     assert response.status_code == 200
     data = response.json()
@@ -109,3 +109,6 @@ def test_armor_status_endpoint() -> None:
     assert data["active_pattern_count"] >= 12
     assert "runtime_patterns" in data
     assert isinstance(data["runtime_patterns"], list)
+    assert "model_armor" in data
+    assert "enabled" in data["model_armor"]
+    assert "template" in data["model_armor"]
