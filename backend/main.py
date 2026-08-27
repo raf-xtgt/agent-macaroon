@@ -3,6 +3,7 @@
 import sys
 from pathlib import Path
 
+from fastapi.middleware.cors import CORSMiddleware
 from google.adk.cli.fast_api import get_fast_api_app
 
 from armor.api import router as armor_router
@@ -22,6 +23,12 @@ for agent_pkg in ("orchestrator", "researcher", "tool_caller", "governed"):
 _AGENTS_DIR = str(Path(__file__).resolve().parent / "agents")
 
 app = get_fast_api_app(agents_dir=_AGENTS_DIR, web=False)
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["http://localhost:3000", "https://localhost:3000"],
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
 app.include_router(audit_router)
 app.include_router(red_team_router)
 app.include_router(armor_router)

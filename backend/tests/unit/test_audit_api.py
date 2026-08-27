@@ -10,7 +10,7 @@ from fastapi.testclient import TestClient
 os.environ.setdefault("AGENT_MACAROON_ROOT_KEY", "test_secret_root_key_123")
 os.environ.setdefault("GOOGLE_CLOUD_PROJECT", "test-project")
 
-from audit.trace import Span
+from audit.trace import Span, emit_span
 from main import app
 
 client = TestClient(app)
@@ -112,3 +112,30 @@ def test_armor_status_endpoint() -> None:
     assert "model_armor" in data
     assert "enabled" in data["model_armor"]
     assert "template" in data["model_armor"]
+
+
+def test_websocket_live_spans() -> None:
+    """Assert WebSocket /audit/live streams emitted spans in real time as JSON."""
+    with client.websocket_connect("/audit/live") as websocket:
+        with patch("audit.trace._get_firestore_client"):
+            span_id = emit_span(
+                chain_id="chain-ws-123",
+                parent_span_id=None,
+                agent_id="orchestrator_agent",
+                macaroon_identifier_hash="hash-live-test",
+                action_requested="issue_macaroon",
+                decision="allow",
+                reason="root macaroon issued",
+                human_subject_id="live_tester@example.com",
+                purpose="test live streaming",
+            )
+
+        data = websocket.receive_json()
+        assert data["span_id"] == span_id
+        assert data["chain_id"] == "chain-ws-123"
+        assert data["agent_id"] == "orchestrator_agent"
+        assert data["action_requested"] == "issue_macaroon"
+        assert data["decision"] == "allow"
+        assert data["human_subject_id"] == "live_tester@example.com"
+        assert "timestamp" in data
+        assert isinstance(data["timestamp"], str)

@@ -2,6 +2,7 @@
 
 import os
 import uuid
+from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from typing import Any
@@ -9,6 +10,20 @@ from typing import Any
 from google.cloud import firestore
 
 _firestore_client: firestore.Client | None = None
+_ws_subscribers: list[Callable[[dict[str, Any]], None]] = []
+
+
+def subscribe_ws(callback: Callable[[dict[str, Any]], None]) -> None:
+    """Register a callback for real-time span broadcasts."""
+    _ws_subscribers.append(callback)
+
+
+def unsubscribe_ws(callback: Callable[[dict[str, Any]], None]) -> None:
+    """Unregister a span broadcast callback."""
+    try:
+        _ws_subscribers.remove(callback)
+    except ValueError:
+        pass
 
 
 def _get_firestore_client() -> firestore.Client:
@@ -92,5 +107,11 @@ def emit_span(
         # authorization decisions already rendered by the gateway. The generated span_id
         # is still returned so downstream callers can maintain parent-span pointers.
         pass
+
+    for cb in _ws_subscribers:
+        try:
+            cb(span_doc)
+        except Exception:  # noqa: BLE001, S110
+            pass
 
     return span_id

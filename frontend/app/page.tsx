@@ -49,6 +49,12 @@ export default async function Page(props: PageProps) {
             <span className="text-slate">·</span>
             <span className="text-slate">replay</span>
           </div>
+          <a
+            href="/live"
+            className="text-slate hover:text-seal-amber text-sm font-mono transition-colors"
+          >
+            live ↗
+          </a>
         </header>
 
         {/* Search Bar — native form GET submission requires zero client JS */}

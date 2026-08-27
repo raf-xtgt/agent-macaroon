@@ -3,7 +3,7 @@
 from datetime import datetime, timezone
 from unittest.mock import MagicMock, patch
 
-from audit.trace import Span, emit_span
+from audit.trace import Span, emit_span, subscribe_ws, unsubscribe_ws
 
 
 def test_span_dataclass_instantiation() -> None:
@@ -129,3 +129,75 @@ def test_emit_span_handles_none_chain_id_and_naive_timestamp() -> None:
     doc_data = mock_doc.set.call_args[0][0]
     assert doc_data["chain_id"] is None
     assert doc_data["timestamp"].tzinfo == timezone.utc
+
+
+def test_subscribe_and_unsubscribe_ws_callback() -> None:
+    """Assert subscribe_ws registers callback and unsubscribe_ws cleanly removes it."""
+    received = []
+
+    def callback(span_doc: dict) -> None:
+        received.append(span_doc)
+
+    subscribe_ws(callback)
+
+    with patch("audit.trace._get_firestore_client", return_value=MagicMock()):
+        span_id = emit_span(
+            chain_id="chain-ws-test",
+            parent_span_id=None,
+            agent_id="orchestrator_agent",
+            macaroon_identifier_hash=None,
+            action_requested="issue_macaroon",
+            decision="allow",
+            reason="root macaroon issued",
+        )
+
+    assert len(received) == 1
+    assert received[0]["span_id"] == span_id
+    assert received[0]["chain_id"] == "chain-ws-test"
+
+    unsubscribe_ws(callback)
+
+    with patch("audit.trace._get_firestore_client", return_value=MagicMock()):
+        emit_span(
+            chain_id="chain-ws-test-2",
+            parent_span_id=span_id,
+            agent_id="researcher_agent",
+            macaroon_identifier_hash=None,
+            action_requested="transfer_to_agent",
+            decision="allow",
+            reason="attenuated",
+        )
+
+    # Count should still be 1 after unsubscribe
+    assert len(received) == 1
+
+
+def test_emit_span_broadcast_handles_subscriber_exception() -> None:
+    """Assert failing subscriber callback does not crash emit_span or block other subscribers."""
+    good_received = []
+
+    def bad_callback(_span_doc: dict) -> None:
+        raise RuntimeError("Subscriber crashed")
+
+    def good_callback(span_doc: dict) -> None:
+        good_received.append(span_doc)
+
+    subscribe_ws(bad_callback)
+    subscribe_ws(good_callback)
+
+    try:
+        with patch("audit.trace._get_firestore_client", return_value=MagicMock()):
+            span_id = emit_span(
+                chain_id="chain-faulty-sub",
+                parent_span_id=None,
+                agent_id="tool_caller_agent",
+                macaroon_identifier_hash=None,
+                action_requested="execute_tool",
+                decision="allow",
+                reason="executed",
+            )
+        assert len(good_received) == 1
+        assert good_received[0]["span_id"] == span_id
+    finally:
+        unsubscribe_ws(bad_callback)
+        unsubscribe_ws(good_callback)

@@ -13,8 +13,8 @@ const geistMono = Geist_Mono({
 });
 
 export const metadata: Metadata = {
-  title: "agent-macaroon · replay",
-  description: "Forensic decision trail and audit replay for multi-agent delegation",
+  title: "agent-macaroon · replay & live",
+  description: "Forensic decision trail and live attack monitoring for multi-agent delegation",
 };
 
 export default function RootLayout({
