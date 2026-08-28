@@ -164,7 +164,7 @@ gateway_plugin = GatewayPlugin(
     initial_scope=_initial_scope,
     tool_action_map=_tool_map,
     entry_agent_id=_entry_agent_id,
-    max_depth=8,
+    max_depth=21,
     enable_model_armor=True,
 )
 

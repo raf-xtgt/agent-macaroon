@@ -81,7 +81,7 @@ async def execute_attack(
             target_tool=target_tool,
             poison_text=payload.payload_text,
         )
-        plugins.append(poison_plugin)
+        plugins.insert(0, poison_plugin)
         message_text = clean_query
     else:
         message_text = payload.payload_text

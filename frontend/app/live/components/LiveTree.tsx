@@ -128,11 +128,11 @@ export function LiveTree({
 
     let linePrefix = "";
     if (depth > 0) {
-      linePrefix = currentPrefix + (isLastChild ? "└─" : "├─");
+      linePrefix = isLastChild ? "└─" : "├─";
     }
 
     const { count: verbCount, names: verbNames } = deriveVerbInfo(node, depth);
-    const scopeLinePrefix = depth === 0 ? "│  " : currentPrefix + (isLastChild ? "   │  " : "│  │  ");
+    const scopeLinePrefix = "";
 
     // Detect if this node has multiple parallel children
     const children = childrenMap.get(node.span_id) || [];
@@ -153,12 +153,10 @@ export function LiveTree({
       parallelCount: children.length,
     });
 
-    const nextChildPrefix = depth === 0 ? "│  " : currentPrefix + (isLastChild ? "   " : "│  ");
-
     for (let i = 0; i < children.length; i++) {
       const child = children[i];
       const isLast = i === children.length - 1;
-      traverse(child, depth + 1, nextChildPrefix, isLast);
+      traverse(child, depth + 1, "", isLast);
     }
   }
 
@@ -232,6 +230,7 @@ export function LiveTree({
                     : "bg-slate/10 ring-1 ring-seal-amber/40"
                   : ""
               }`}
+              style={{ paddingLeft: `${item.depth * 16}px` }}
             >
               <SpanRow
                 span={item.span}
@@ -242,12 +241,8 @@ export function LiveTree({
                 chainId={effectiveChainId || undefined}
               />
 
-              {/* Scope Attenuation Bar attached to delegation hops */}
               {item.isHop && (
-                <div className="pl-4 ml-6 py-0.5 flex items-center">
-                  <span className="text-slate/40 select-none whitespace-pre text-xs">
-                    {item.scopeLinePrefix}
-                  </span>
+                <div className="py-0.5" style={{ paddingLeft: `${item.depth * 16 + 24}px` }}>
                   <ScopeBar
                     currentVerbs={item.verbCount}
                     maxVerbs={ALL_VERBS.length}
@@ -257,10 +252,12 @@ export function LiveTree({
                 </div>
               )}
 
-              {/* Parallel Agent Group Box Header if detected */}
               {item.isParallelLeader && (
-                <div className="ml-12 my-1 px-2.5 py-1 bg-slate/10 border border-slate/30 rounded text-[11px] text-seal-amber font-mono flex items-center gap-2">
-                  <span>⚡ PARALLEL ({item.parallelCount} agents dispatched concurrently)</span>
+                <div
+                  className="my-1 px-2.5 py-1 bg-slate/10 border border-slate/30 rounded text-[11px] text-seal-amber font-mono"
+                  style={{ marginLeft: `${item.depth * 16 + 24}px` }}
+                >
+                  ⚡ PARALLEL ({item.parallelCount} agents)
                 </div>
               )}
             </div>

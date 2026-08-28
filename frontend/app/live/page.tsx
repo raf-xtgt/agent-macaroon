@@ -318,9 +318,9 @@ export default function LiveDashboardPage() {
             </div>
 
             {/* Main 2-Column Grid (Tree on Left, Blast + Defense on Right) */}
-            <div className="grid grid-cols-1 lg:grid-cols-[1fr_360px] gap-4 items-start">
+            <div className="grid grid-cols-1 lg:grid-cols-[minmax(0,1fr)_360px] gap-4 items-start">
               {/* Left Column: Live Delegation Tree */}
-              <div className="border border-slate/30 rounded-lg bg-ink p-4 sm:p-5 min-h-[500px] flex flex-col justify-between">
+              <div className="border border-slate/30 rounded-lg bg-ink p-4 sm:p-5 min-h-[500px] flex flex-col justify-between overflow-x-auto">
                 <div>
                   <div className="border-b border-slate/20 pb-2 mb-3 flex items-center justify-between">
                     <span className="text-slate font-sans uppercase tracking-wider text-[11px] font-semibold">
