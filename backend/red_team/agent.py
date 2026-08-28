@@ -23,7 +23,7 @@ class AttackPayload:
 def generate_payload(
     objective: AttackObjective,
     fleet_context: dict[str, Any],
-    model: str = "gemma-3-27b-it",
+    model: str = "gemma-4-26b-a4b-it-maas",
 ) -> AttackPayload:
     """Generate an adversarial payload for the given objective.
 

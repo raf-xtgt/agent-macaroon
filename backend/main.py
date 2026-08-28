@@ -22,10 +22,16 @@ for agent_pkg in ("orchestrator", "researcher", "tool_caller", "governed"):
 
 _AGENTS_DIR = str(Path(__file__).resolve().parent / "agents")
 
-app = get_fast_api_app(agents_dir=_AGENTS_DIR, web=False)
+_ALLOWED_ORIGINS = ["http://localhost:3000", "https://localhost:3000"]
+
+app = get_fast_api_app(
+    agents_dir=_AGENTS_DIR,
+    web=False,
+    allow_origins=_ALLOWED_ORIGINS,
+)
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:3000", "https://localhost:3000"],
+    allow_origins=_ALLOWED_ORIGINS,
     allow_methods=["*"],
     allow_headers=["*"],
 )

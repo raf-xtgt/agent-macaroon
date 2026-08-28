@@ -1,5 +1,6 @@
 "use client";
 
+import { useState, useCallback } from "react";
 import type { SpanData } from "../../types";
 import { SpanRow } from "../../components/SpanRow";
 import { ScopeBar } from "./ScopeBar";
@@ -20,39 +21,46 @@ interface FlattenedLiveNode {
   depth: number;
   isHop: boolean;
   verbCount: number;
+  verbNames: string[];
   scopeLinePrefix: string;
   isParallelLeader?: boolean;
   parallelCount?: number;
 }
 
-function deriveVerbCount(span: SpanData, depth: number): number {
+const ALL_VERBS = ["search", "retrieve", "read", "delegate"];
+
+function deriveVerbInfo(span: SpanData, depth: number): { count: number; names: string[] } {
   const reason = (span.reason || "").toLowerCase();
 
-  // Check explicit reason patterns
   if (reason.includes("allowed=")) {
     const match = reason.match(/allowed=([a-z_, ]+)/);
     if (match && match[1]) {
-      return match[1].split(",").map((s) => s.trim()).filter(Boolean).length;
+      const names = match[1].split(",").map((s) => s.trim()).filter(Boolean);
+      return { count: names.length, names };
     }
   }
   if (reason.includes("scope narrowed to")) {
     const match = reason.match(/scope narrowed to ([a-z_, ]+)/);
     if (match && match[1]) {
-      return match[1].split(",").map((s) => s.trim()).filter(Boolean).length;
+      const names = match[1].split(",").map((s) => s.trim()).filter(Boolean);
+      return { count: names.length, names };
     }
   }
-  if (reason.includes("4 verbs") || reason.includes("root macaroon")) {
-    return 4;
+  if (reason.includes("scope=")) {
+    const match = reason.match(/scope=([a-z_, ]+)/);
+    if (match && match[1]) {
+      const names = match[1].split(",").map((s) => s.trim()).filter(Boolean);
+      return { count: names.length, names };
+    }
   }
-  if (reason.includes("3 verbs")) return 3;
-  if (reason.includes("2 verbs")) return 2;
-  if (reason.includes("1 verb")) return 1;
+  if (reason.includes("root macaroon")) {
+    return { count: ALL_VERBS.length, names: [...ALL_VERBS] };
+  }
 
-  // Depth-based attenuation heuristic (scope only narrows)
-  if (depth === 0) return 4;
-  if (depth === 1) return 3;
-  if (depth === 2) return 2;
-  return 1;
+  if (depth === 0) return { count: ALL_VERBS.length, names: [...ALL_VERBS] };
+  if (depth === 1) return { count: 3, names: ALL_VERBS.slice(0, 3) };
+  if (depth === 2) return { count: 2, names: ALL_VERBS.slice(0, 2) };
+  return { count: 1, names: ALL_VERBS.slice(0, 1) };
 }
 
 export function LiveTree({
@@ -73,11 +81,21 @@ export function LiveTree({
   }
 
   // Find root span details
+  const [copied, setCopied] = useState(false);
+
   const rootSpan = spans.find((s) => s.parent_span_id === null) || spans[0];
   const effectiveChainId = rootSpan?.chain_id || chainId;
   const human = rootSpan?.human_subject_id || "anonymous";
   const purpose = rootSpan?.purpose || "compliance check on Google UK";
   const lastSpanId = spans[spans.length - 1]?.span_id;
+
+  const handleCopyChainId = useCallback(() => {
+    if (!effectiveChainId) return;
+    navigator.clipboard.writeText(effectiveChainId).then(() => {
+      setCopied(true);
+      setTimeout(() => setCopied(false), 2000);
+    });
+  }, [effectiveChainId]);
 
   // Map children by parent_span_id
   const childrenMap = new Map<string | null, SpanData[]>();
@@ -113,7 +131,7 @@ export function LiveTree({
       linePrefix = currentPrefix + (isLastChild ? "└─" : "├─");
     }
 
-    const verbCount = deriveVerbCount(node, depth);
+    const { count: verbCount, names: verbNames } = deriveVerbInfo(node, depth);
     const scopeLinePrefix = depth === 0 ? "│  " : currentPrefix + (isLastChild ? "   │  " : "│  │  ");
 
     // Detect if this node has multiple parallel children
@@ -129,6 +147,7 @@ export function LiveTree({
       depth,
       isHop: isIssueOrTransfer,
       verbCount,
+      verbNames,
       scopeLinePrefix,
       isParallelLeader,
       parallelCount: children.length,
@@ -164,11 +183,21 @@ export function LiveTree({
       {/* Session Provenance Header */}
       <div className="p-3 bg-ink/70 border border-slate/25 rounded-md text-xs space-y-1">
         <div className="flex flex-wrap items-center gap-x-4 gap-y-1">
-          <div>
+          <div className="flex items-center gap-1">
             <span className="text-slate">chain: </span>
             <span className="text-parchment font-semibold">
               {effectiveChainId ? `${effectiveChainId.slice(0, 8)}…` : "(none)"}
             </span>
+            {effectiveChainId && (
+              <button
+                type="button"
+                onClick={handleCopyChainId}
+                className="px-1.5 py-0.5 text-[10px] text-slate hover:text-parchment bg-slate/10 hover:bg-slate/20 border border-slate/30 rounded transition-colors cursor-pointer"
+                title="Copy full chain_id to clipboard"
+              >
+                {copied ? "copied" : "copy"}
+              </button>
+            )}
           </div>
           <div>
             <span className="text-slate">human: </span>
@@ -219,7 +248,12 @@ export function LiveTree({
                   <span className="text-slate/40 select-none whitespace-pre text-xs">
                     {item.scopeLinePrefix}
                   </span>
-                  <ScopeBar currentVerbs={item.verbCount} maxVerbs={4} />
+                  <ScopeBar
+                    currentVerbs={item.verbCount}
+                    maxVerbs={ALL_VERBS.length}
+                    verbNames={item.verbNames}
+                    allVerbs={ALL_VERBS}
+                  />
                 </div>
               )}
 
