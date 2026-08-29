@@ -1,5 +1,6 @@
-"""Red-team payload generator using Gemma (Vertex AI) with Gemini fallback."""
+"""Red-team payload generator using Llama 4 Maverick (Vertex AI) with fallback."""
 
+import os
 from dataclasses import dataclass
 from typing import Any
 
@@ -8,6 +9,13 @@ from google.genai import types
 
 from .objectives import AttackObjective
 
+RED_TEAM_MODEL = os.environ.get(
+    "RED_TEAM_MODEL", "meta/llama-4-maverick-17b-128e-instruct-maas"
+)
+RED_TEAM_FALLBACK = os.environ.get(
+    "RED_TEAM_FALLBACK", "meta/llama-3.3-70b-instruct-maas"
+)
+_RED_TEAM_LOCATION = os.environ.get("GOOGLE_CLOUD_LOCATION", "us-central1")
 
 @dataclass(frozen=True)
 class AttackPayload:
@@ -23,17 +31,17 @@ class AttackPayload:
 def generate_payload(
     objective: AttackObjective,
     fleet_context: dict[str, Any],
-    model: str = "gemma-4-26b-a4b-it-maas",
+    model: str = RED_TEAM_MODEL,
 ) -> AttackPayload:
     """Generate an adversarial payload for the given objective.
 
-    Uses Gemma on Vertex AI to generate creative natural-language prompt injection payloads,
-    falling back to Gemini if Gemma or Vertex AI is unavailable.
+    Uses Llama 4 Maverick on Vertex AI to generate creative natural-language prompt injection payloads,
+    falling back to Llama 3.3 70B, Gemini, or offline goal if unavailable.
 
     Args:
         objective: The attack objective to generate a payload for.
         fleet_context: Dict with keys "agent_names", "tool_names", "tool_action_map".
-        model: Model ID to use. Defaults to "gemma-3-27b-it".
+        model: Model ID to use. Defaults to RED_TEAM_MODEL.
 
     Returns:
         AttackPayload with the generated injection text and metadata.
@@ -67,14 +75,14 @@ def generate_payload(
 
     user_prompt = f"Write a test input for security test: {objective.name}"
 
-    # Try Gemma on Vertex AI first, then fallback to Gemini, then offline fallback
-    models_to_try = [model, "gemini-2.5-flash"]
+    # Try primary model first, then fallback model, then Gemini, then offline fallback
+    models_to_try = [model, RED_TEAM_FALLBACK, "gemini-2.5-flash"]
     payload_text: str | None = None
     model_used = "fallback"
 
     for candidate_model in models_to_try:
         try:
-            client = genai.Client(vertexai=True, location="global")
+            client = genai.Client(vertexai=True, location=_RED_TEAM_LOCATION)
             config = types.GenerateContentConfig(
                 system_instruction=system_prompt,
                 temperature=0.7,
@@ -89,7 +97,7 @@ def generate_payload(
                 payload_text = text.strip()
                 model_used = candidate_model
                 break
-        except Exception as e:  # noqa: BLE001, S112
+        except Exception as e:  # noqa: BLE001
             # Continue to next fallback model
             print(f"Failed to generate payload with model {candidate_model}.")
             print(f"Error: {e}")

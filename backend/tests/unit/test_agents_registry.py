@@ -60,3 +60,28 @@ def test_prd_f3_ceiling_exclusion() -> None:
     assert "read" in ceiling
     assert "write" not in ceiling
     assert "delete" not in ceiling
+
+
+def test_list_agents_returns_registered_ids() -> None:
+    """Assert list_agents returns all registered agent IDs."""
+    registry = AgentRegistry()
+    registry.register(
+        agent_id="agent_alpha",
+        display_name="Alpha",
+        max_scope={"read"},
+        owner="team-a",
+    )
+    registry.register(
+        agent_id="agent_beta",
+        display_name="Beta",
+        max_scope={"write"},
+        owner="team-b",
+    )
+    agents = registry.list_agents()
+    assert set(agents) == {"agent_alpha", "agent_beta"}
+
+
+def test_list_agents_empty_registry() -> None:
+    """Assert list_agents returns an empty list for an empty registry."""
+    registry = AgentRegistry()
+    assert registry.list_agents() == []

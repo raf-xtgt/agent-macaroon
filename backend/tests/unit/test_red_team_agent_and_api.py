@@ -11,11 +11,30 @@ from fastapi.testclient import TestClient
 from audit.trace import Span
 from blast.radius import BlastRadiusResult
 from main import app
-from red_team.agent import AttackPayload, generate_payload
+from red_team.agent import RED_TEAM_MODEL, AttackPayload, generate_payload
 from red_team.executor import AttackResult, execute_attack
 from red_team.objectives import OBJECTIVES
 
 client = TestClient(app)
+
+
+def test_generate_payload_uses_maverick_model_first() -> None:
+    """Assert generate_payload attempts Llama 4 Maverick as the primary model."""
+    objective = OBJECTIVES["exfiltrate_insider_data"]
+    fleet_context = {"agent_names": [], "tool_names": [], "tool_action_map": {}}
+
+    mock_client = MagicMock()
+    mock_response = SimpleNamespace(text="Llama 4 generated test payload")
+    mock_client.models.generate_content.return_value = mock_response
+
+    with patch("red_team.agent.genai.Client", return_value=mock_client):
+        payload = generate_payload(objective, fleet_context)
+
+    assert payload.model_used == RED_TEAM_MODEL
+    assert "maverick" in payload.model_used.lower()
+    # Check that generate_content was called with the primary model
+    call_kwargs = mock_client.models.generate_content.call_args.kwargs
+    assert call_kwargs["model"] == RED_TEAM_MODEL
 
 
 def test_generate_payload_with_mocked_genai_success() -> None:
@@ -243,12 +262,12 @@ async def test_execute_attack_blocked_by_model_armor() -> None:
 
 
 def test_api_list_objectives() -> None:
-    """Assert GET /red-team/objectives returns 200 and all 5 objectives."""
+    """Assert GET /red-team/objectives returns 200 and all 6 objectives."""
     response = client.get("/red-team/objectives")
     assert response.status_code == 200
     data = response.json()
     assert "objectives" in data
-    assert len(data["objectives"]) == 5
+    assert len(data["objectives"]) == 6
 
     obj_ids = [obj["id"] for obj in data["objectives"]]
     assert "exfiltrate_insider_data" in obj_ids
@@ -256,6 +275,7 @@ def test_api_list_objectives() -> None:
     assert "lateral_jurisdiction" in obj_ids
     assert "scope_escalation" in obj_ids
     assert "data_poisoning" in obj_ids
+    assert "defense_evasion" in obj_ids
 
 
 def test_api_run_attack_invalid_objective_404() -> None:
@@ -313,3 +333,107 @@ def test_api_run_attack_success() -> None:
     assert data["payload"]["model_used"] == "gemma-3-27b-it"
     assert data["blast_radius"]["score"] == 25
     assert data["blast_radius"]["max_sensitivity"] == "HIGH"
+
+
+def test_api_run_attack_campaign_mode() -> None:
+    """Assert POST /red-team/attack with mode=campaign returns multi-step campaign schema."""
+    from red_team.recon.fleet_map import FleetMap
+    from red_team.strategy.campaign import Campaign, CampaignStep, StepResult
+
+    fleet_map = FleetMap(agents={}, ceilings={}, tool_actions={})
+    mock_campaign = Campaign(
+        id="c-api-test-1",
+        objective="fabricate_compliance",
+        fleet_map=fleet_map,
+        max_steps=2,
+    )
+    step1 = CampaignStep(
+        step_number=1,
+        phase="probe",
+        objective="fabricate_compliance",
+        surface="user_message",
+        payload="Probe payload",
+        technique="instruction_override",
+    )
+    result1 = StepResult(
+        step=step1,
+        verdict="blocked",
+        denial_reasons=["blocked by regex"],
+        defense_layer="F5_regex",
+        chain_id="chain-step-1",
+        spans_count=1,
+    )
+    mock_campaign.add_step_result(result1)
+
+    with patch("red_team.api.execute_campaign", new_callable=AsyncMock) as mock_exec:
+        mock_exec.return_value = mock_campaign
+        response = client.post(
+            "/red-team/attack",
+            json={
+                "objective_id": "fabricate_compliance",
+                "mode": "campaign",
+                "max_steps": 2,
+            },
+        )
+
+    assert response.status_code == 200
+    data = response.json()
+    assert data["campaign_id"] == "c-api-test-1"
+    assert data["mode"] == "campaign"
+    assert data["total_steps"] == 1
+    assert data["aggregate_verdict"] == "blocked"
+    assert len(data["steps"]) == 1
+    assert data["steps"][0]["technique"] == "instruction_override"
+
+
+def test_api_fleet_map_endpoint() -> None:
+    """Assert GET /red-team/fleet-map returns structured fleet map."""
+    from red_team.recon.fleet_map import FleetMap
+
+    mock_map = FleetMap(
+        agents={"root_agent": {"tools": ["search_companies"], "sub_agents": []}},
+        ceilings={"root_agent": frozenset({"search"})},
+        tool_actions={"search_companies": "search"},
+    )
+
+    with patch("red_team.api.build_fleet_map", return_value=mock_map):
+        response = client.get("/red-team/fleet-map")
+
+    assert response.status_code == 200
+    data = response.json()
+    assert "agents" in data
+    assert "ceilings" in data
+    assert "weakest_agents" in data
+    assert "boundary_agents" in data
+    assert data["agent_count"] == 1
+
+
+def test_api_attack_default_mode_is_single() -> None:
+    """Assert POST /red-team/attack defaults to single mode when mode is omitted."""
+    with patch("red_team.api.execute_attack", new_callable=AsyncMock) as mock_exec:
+        mock_exec.return_value = AttackResult(
+            objective_id="exfiltrate_insider_data",
+            payload=AttackPayload(
+                objective_id="exfiltrate_insider_data",
+                injection_surface="user_message",
+                payload_text="Single shot",
+                target_tool=None,
+                model_used="test-model",
+            ),
+            verdict="blocked",
+            blocked_by="gateway_scope",
+            chain_id="chain-default",
+            blast_radius=None,
+            spans_count=1,
+            denial_reasons=[],
+        )
+        response = client.post(
+            "/red-team/attack",
+            json={"objective_id": "exfiltrate_insider_data"},
+        )
+
+    assert response.status_code == 200
+    data = response.json()
+    assert "verdict" in data
+    assert "payload" in data
+    assert mock_exec.called

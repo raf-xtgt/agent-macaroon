@@ -366,7 +366,11 @@ class GatewayPlugin(BasePlugin):
             macaroon_identifier_hash=attenuated_hash,
             action_requested="transfer_to_agent",
             decision="allow",
-            reason=f"scope narrowed to {', '.join(attenuated_scope)}" if attenuated_scope else "attenuated (scope empty)",
+            reason=(
+                f"scope narrowed to {', '.join(attenuated_scope)}"
+                if attenuated_scope
+                else "attenuated (scope empty)"
+            ),
             defense_layer="F2_attenuation",
             scope_snapshot=attenuated_scope,
         )
@@ -451,7 +455,7 @@ class GatewayPlugin(BasePlugin):
         if macaroon is not None:
             try:
                 tool_scope = sorted(current_scope(macaroon))
-            except Exception:  # noqa: BLE001
+            except Exception:  # noqa: BLE001, S110
                 pass
 
         emit_span(

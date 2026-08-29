@@ -61,6 +61,14 @@ class AgentRegistry:
             created_at=datetime.now(timezone.utc),
         )
 
+    def list_agents(self) -> list[str]:
+        """Return a list of all registered agent IDs.
+
+        Returns:
+            list[str]: List of agent IDs currently in the registry.
+        """
+        return list(self._records.keys())
+
     def ceiling(self, agent_id: str) -> frozenset[str]:
         """Look up the scope ceiling for an agent.
 

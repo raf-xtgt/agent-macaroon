@@ -4,16 +4,17 @@ from red_team.objectives import OBJECTIVES, AttackObjective
 
 
 def test_objectives_count_and_keys() -> None:
-    """Assert all 5 required attack objectives are present and keyed by id."""
+    """Assert all 6 required attack objectives are present and keyed by id."""
     expected_ids = {
         "exfiltrate_insider_data",
         "fabricate_compliance",
         "lateral_jurisdiction",
         "scope_escalation",
         "data_poisoning",
+        "defense_evasion",
     }
     assert set(OBJECTIVES.keys()) == expected_ids
-    assert len(OBJECTIVES) == 5
+    assert len(OBJECTIVES) == 6
 
 
 def test_objectives_fields_non_empty() -> None:
@@ -26,6 +27,16 @@ def test_objectives_fields_non_empty() -> None:
         assert isinstance(obj.example_goal, str) and len(obj.example_goal.strip()) > 0
         assert isinstance(obj.target_tools, list) and len(obj.target_tools) > 0
         assert all(isinstance(t, str) and len(t) > 0 for t in obj.target_tools)
+
+
+def test_defense_evasion_objective_fields() -> None:
+    """Assert defense_evasion objective has correct structure and properties."""
+    obj = OBJECTIVES["defense_evasion"]
+    assert obj.id == "defense_evasion"
+    assert "Defense Evasion" in obj.name
+    assert "search_companies" in obj.target_tools
+    assert obj.injection_surface == "user_message"
+    assert len(obj.example_goal) > 0
 
 
 def test_objectives_injection_surface_valid() -> None:
