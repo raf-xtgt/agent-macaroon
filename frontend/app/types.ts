@@ -14,6 +14,8 @@ export interface SpanData {
   chain_id?: string | null;
   human_subject_id?: string | null;
   purpose?: string | null;
+  defense_layer?: string | null;
+  scope_snapshot?: string[] | null;
 }
 
 export interface ReplayResponse {

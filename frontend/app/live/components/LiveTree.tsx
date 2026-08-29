@@ -29,16 +29,13 @@ interface FlattenedLiveNode {
 
 const ALL_VERBS = ["search", "retrieve", "read", "delegate"];
 
-function deriveVerbInfo(span: SpanData, depth: number): { count: number; names: string[] } {
+function deriveVerbInfo(span: SpanData): { count: number; names: string[] } {
+  if (span.scope_snapshot && span.scope_snapshot.length > 0) {
+    return { count: span.scope_snapshot.length, names: [...span.scope_snapshot] };
+  }
+
   const reason = (span.reason || "").toLowerCase();
 
-  if (reason.includes("allowed=")) {
-    const match = reason.match(/allowed=([a-z_, ]+)/);
-    if (match && match[1]) {
-      const names = match[1].split(",").map((s) => s.trim()).filter(Boolean);
-      return { count: names.length, names };
-    }
-  }
   if (reason.includes("scope narrowed to")) {
     const match = reason.match(/scope narrowed to ([a-z_, ]+)/);
     if (match && match[1]) {
@@ -46,10 +43,10 @@ function deriveVerbInfo(span: SpanData, depth: number): { count: number; names: 
       return { count: names.length, names };
     }
   }
-  if (reason.includes("scope=")) {
-    const match = reason.match(/scope=([a-z_, ]+)/);
-    if (match && match[1]) {
-      const names = match[1].split(",").map((s) => s.trim()).filter(Boolean);
+  if (reason.includes("allowed=")) {
+    const match = reason.match(/allowed=([a-z_, ]*)/);
+    if (match) {
+      const names = match[1] ? match[1].split(",").map((s) => s.trim()).filter(Boolean) : [];
       return { count: names.length, names };
     }
   }
@@ -57,10 +54,7 @@ function deriveVerbInfo(span: SpanData, depth: number): { count: number; names: 
     return { count: ALL_VERBS.length, names: [...ALL_VERBS] };
   }
 
-  if (depth === 0) return { count: ALL_VERBS.length, names: [...ALL_VERBS] };
-  if (depth === 1) return { count: 3, names: ALL_VERBS.slice(0, 3) };
-  if (depth === 2) return { count: 2, names: ALL_VERBS.slice(0, 2) };
-  return { count: 1, names: ALL_VERBS.slice(0, 1) };
+  return { count: 0, names: [] };
 }
 
 export function LiveTree({
@@ -131,7 +125,7 @@ export function LiveTree({
       linePrefix = isLastChild ? "└─" : "├─";
     }
 
-    const { count: verbCount, names: verbNames } = deriveVerbInfo(node, depth);
+    const { count: verbCount, names: verbNames } = deriveVerbInfo(node);
     const scopeLinePrefix = "";
 
     // Detect if this node has multiple parallel children

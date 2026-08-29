@@ -165,6 +165,8 @@ class GatewayPlugin(BasePlugin):
                 reason="root macaroon issued",
                 human_subject_id=user_id,
                 purpose=purpose,
+                defense_layer="F1_issuance",
+                scope_snapshot=sorted(issuance_scope),
             )
 
             if hasattr(invocation_context, "session") and hasattr(
@@ -220,6 +222,7 @@ class GatewayPlugin(BasePlugin):
                 action_requested="transfer_to_agent",
                 decision="deny",
                 reason="No delegation macaroon found in session state.",
+                defense_layer="F2_attenuation",
             )
             return types.Content(
                 role="model",
@@ -239,7 +242,6 @@ class GatewayPlugin(BasePlugin):
             AttributeError,
             UnicodeError,
         ):
-            # Orphaned span: chain_id and identifier hash cannot be parsed due to deserialization failure
             emit_span(
                 chain_id=None,
                 parent_span_id=parent_span_id,
@@ -248,6 +250,7 @@ class GatewayPlugin(BasePlugin):
                 action_requested="transfer_to_agent",
                 decision="deny",
                 reason="Failed to deserialize delegation macaroon.",
+                defense_layer="F2_attenuation",
             )
             return types.Content(
                 role="model",
@@ -285,6 +288,7 @@ class GatewayPlugin(BasePlugin):
                 action_requested="transfer_to_agent",
                 decision="deny",
                 reason="Invalid or tampered macaroon signature.",
+                defense_layer="F2_attenuation",
             )
             return types.Content(
                 role="model",
@@ -313,6 +317,8 @@ class GatewayPlugin(BasePlugin):
                 action_requested="transfer_to_agent",
                 decision="deny",
                 reason=f"Delegation depth exceeded: {exc}",
+                defense_layer="F2_attenuation",
+                scope_snapshot=sorted(curr_scope),
             )
             return types.Content(
                 role="model",
@@ -331,6 +337,8 @@ class GatewayPlugin(BasePlugin):
                 action_requested="transfer_to_agent",
                 decision="deny",
                 reason=f"Macaroon attenuation failed: {exc}",
+                defense_layer="F2_attenuation",
+                scope_snapshot=sorted(curr_scope),
             )
             return types.Content(
                 role="model",
@@ -349,6 +357,8 @@ class GatewayPlugin(BasePlugin):
         )
         attenuated_hash = hashlib.sha256(attenuated_raw_bytes).hexdigest()
 
+        attenuated_scope = sorted(current_scope(attenuated))
+
         span_id = emit_span(
             chain_id=chain_id,
             parent_span_id=parent_span_id,
@@ -356,7 +366,9 @@ class GatewayPlugin(BasePlugin):
             macaroon_identifier_hash=attenuated_hash,
             action_requested="transfer_to_agent",
             decision="allow",
-            reason="attenuated",
+            reason=f"scope narrowed to {', '.join(attenuated_scope)}" if attenuated_scope else "attenuated (scope empty)",
+            defense_layer="F2_attenuation",
+            scope_snapshot=attenuated_scope,
         )
 
         callback_context.state["agent_macaroon"] = attenuated.serialize()
@@ -435,6 +447,13 @@ class GatewayPlugin(BasePlugin):
         if state is not None:
             parent_span_id = state.get("agent_macaroon_span")
 
+        tool_scope: list[str] = []
+        if macaroon is not None:
+            try:
+                tool_scope = sorted(current_scope(macaroon))
+            except Exception:  # noqa: BLE001
+                pass
+
         emit_span(
             chain_id=decision.chain_id,
             parent_span_id=parent_span_id,
@@ -444,6 +463,8 @@ class GatewayPlugin(BasePlugin):
             decision="allow" if decision.allowed else "deny",
             reason=span_reason,
             timestamp=decision.timestamp,
+            defense_layer="F4_gateway",
+            scope_snapshot=tool_scope,
         )
 
         if decision.allowed:
@@ -601,6 +622,7 @@ class GatewayPlugin(BasePlugin):
 
         if has_quarantine:
             quarantined_keys = sorted(quarantined.keys())
+            screen_layer = "F5_model_armor_ml" if ma_confidences else "F5_regex"
             span_reason = f"quarantined fields: {quarantined_keys}"
             if ma_confidences:
                 span_reason += f" [Model Armor: {', '.join(ma_confidences)}]"
@@ -612,6 +634,7 @@ class GatewayPlugin(BasePlugin):
                 action_requested=f"screen:{tool_name}",
                 decision="deny",
                 reason=span_reason,
+                defense_layer=screen_layer,
             )
             return quarantined
 
@@ -623,5 +646,6 @@ class GatewayPlugin(BasePlugin):
             action_requested=f"screen:{tool_name}",
             decision="allow",
             reason="clean",
+            defense_layer="F5_screen",
         )
         return None

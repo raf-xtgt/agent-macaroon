@@ -770,6 +770,7 @@ async def test_after_tool_recovers_chain_id_and_macaroon_hash(
         human_subject_id: str | None = None,
         purpose: str | None = None,
         timestamp: Any = None,
+        **_extra: Any,
     ) -> str:
         emitted_spans.append(
             {
@@ -867,6 +868,7 @@ async def test_gateway_parent_span_chain_structure(
         human_subject_id: str | None = None,
         purpose: str | None = None,
         timestamp: Any = None,
+        **_extra: Any,
     ) -> str:
         span_id = f"span-{len(emitted_spans)}"
         emitted_spans.append(
@@ -1083,6 +1085,7 @@ async def test_gateway_memory_bank_violation_threshold_flag_in_span_reason(
         human_subject_id: str | None = None,
         purpose: str | None = None,
         timestamp: Any = None,
+        **_extra: Any,
     ) -> str:
         span_id = f"span-{len(emitted_spans)}"
         emitted_spans.append(
@@ -1257,6 +1260,7 @@ async def test_gateway_memory_bank_elevated_violations_does_not_override_valid_m
         human_subject_id: str | None = None,
         purpose: str | None = None,
         timestamp: Any = None,
+        **_extra: Any,
     ) -> str:
         span_id = f"span-{len(emitted_spans)}"
         emitted_spans.append(

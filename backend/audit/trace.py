@@ -54,6 +54,8 @@ class Span:
     timestamp: datetime
     human_subject_id: str | None = None  # root span only
     purpose: str | None = None  # root span only
+    defense_layer: str | None = None
+    scope_snapshot: list[str] | None = None
 
 
 def emit_span(
@@ -67,6 +69,8 @@ def emit_span(
     human_subject_id: str | None = None,
     purpose: str | None = None,
     timestamp: datetime | None = None,
+    defense_layer: str | None = None,
+    scope_snapshot: list[str] | None = None,
 ) -> str:
     """Write one span to Firestore collection `audit_spans`, doc ID = generated span_id.
 
@@ -97,6 +101,8 @@ def emit_span(
         "timestamp": ts,
         "human_subject_id": human_subject_id,
         "purpose": purpose,
+        "defense_layer": defense_layer,
+        "scope_snapshot": scope_snapshot,
     }
 
     try:

@@ -110,15 +110,20 @@ export function SpanRow({
 
       {/* Inline reason / metadata for desktop */}
       <div className="hidden md:flex items-center justify-between text-xs font-mono text-slate pl-4 ml-6 mt-1">
-        <div className="truncate flex-1">
+        <div className="truncate flex-1 flex items-center gap-2">
+          {span.defense_layer && (
+            <span className="px-1.5 py-0.5 rounded text-[10px] font-semibold border border-slate/30 bg-slate/10 text-shield-blue shrink-0">
+              {span.defense_layer.replace(/^F\d+_/, "").replace(/_/g, " ").toUpperCase()}
+            </span>
+          )}
           {isScreen ? (
             isDeny ? (
-              <span className="text-ledger-red">Model Armor: {span.reason}</span>
+              <span className="text-ledger-red truncate">quarantined: {span.reason}</span>
             ) : (
-              <span className="text-slate">Model Armor: clean</span>
+              <span className="text-slate">clean</span>
             )
           ) : (
-            <span className={isDeny ? "text-ledger-red" : "text-slate"}>
+            <span className={`truncate ${isDeny ? "text-ledger-red" : "text-slate"}`}>
               {span.reason ? `reason: ${span.reason}` : ""}
             </span>
           )}
@@ -194,6 +199,31 @@ export function SpanRow({
             <span className={isDeny ? "text-ledger-red" : "text-parchment"}>
               {span.reason || "(none)"}
             </span>
+
+            {span.defense_layer && (
+              <>
+                <span className="text-slate">defense:</span>
+                <span className="text-shield-blue font-semibold">
+                  {span.defense_layer.replace(/^F\d+_/, "").replace(/_/g, " ").toUpperCase()}
+                </span>
+              </>
+            )}
+
+            {span.scope_snapshot && span.scope_snapshot.length > 0 && (
+              <>
+                <span className="text-slate">scope:</span>
+                <span className="text-ledger-green">
+                  {"{" + span.scope_snapshot.join(", ") + "}"}
+                </span>
+              </>
+            )}
+
+            {span.scope_snapshot && span.scope_snapshot.length === 0 && (
+              <>
+                <span className="text-slate">scope:</span>
+                <span className="text-ledger-red">{"{ } (empty)"}</span>
+              </>
+            )}
 
             <span className="text-slate">parent_span:</span>
             <span className="text-slate/80">{span.parent_span_id || "(root span)"}</span>
