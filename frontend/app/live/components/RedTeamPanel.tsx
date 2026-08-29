@@ -1,5 +1,6 @@
 "use client";
 
+import { useState } from "react";
 import type { AttackObjective, AttackResultData } from "../../types";
 
 interface RedTeamPanelProps {
@@ -19,6 +20,7 @@ export function RedTeamPanel({
   isAttacking,
   attackResult,
 }: RedTeamPanelProps) {
+  const [payloadExpanded, setPayloadExpanded] = useState(false);
   const isBlocked = attackResult?.verdict === "blocked";
 
   return (
@@ -89,11 +91,22 @@ export function RedTeamPanel({
       {attackResult && (
         <div className="pt-2 border-t border-slate/20 space-y-2 text-xs">
           {attackResult.payload?.payload_text && (
-            <div className="text-slate flex flex-col sm:flex-row gap-1">
-              <span className="text-gemma-purple shrink-0">payload:</span>
-              <span className="text-parchment italic font-mono truncate">
-                &ldquo;{attackResult.payload.payload_text}&rdquo;
-              </span>
+            <div className="text-slate">
+              <div className="flex items-start gap-1">
+                <span className="text-gemma-purple shrink-0">payload:</span>
+                <span
+                  className={`text-parchment italic font-mono ${payloadExpanded ? "whitespace-pre-wrap break-all" : "truncate"}`}
+                >
+                  &ldquo;{attackResult.payload.payload_text}&rdquo;
+                </span>
+                <button
+                  type="button"
+                  onClick={() => setPayloadExpanded((p) => !p)}
+                  className="shrink-0 px-1.5 py-0.5 text-[10px] text-slate hover:text-parchment bg-slate/10 hover:bg-slate/20 border border-slate/30 rounded transition-colors cursor-pointer"
+                >
+                  {payloadExpanded ? "collapse" : "expand"}
+                </button>
+              </div>
             </div>
           )}
 
