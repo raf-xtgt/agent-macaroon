@@ -13,10 +13,21 @@ from blast.radius import BlastRadiusResult, compute_blast_radius
 
 from .agent import AttackPayload, generate_payload
 from .catalog.templates import load_all_templates
+from .narrative import (
+    emit_adapt_span,
+    emit_complete_span,
+    emit_generate_span,
+    emit_inject_span,
+    emit_plan_span,
+    emit_recon_span,
+    emit_result_span,
+    emit_step_span,
+)
 from .objectives import AttackObjective
 from .poison_plugin import PoisonPlugin
 from .recon.fleet_map import FleetMap, build_fleet_map
 from .strategy.campaign import Campaign, CampaignStep, StepResult
+from .strategy.feedback import parse_defense_response
 from .strategy.strategist import PlannedStep, adapt_step, plan_campaign
 from .surfaces.inter_agent import prepare_inter_agent_surface
 from .surfaces.state_injection import prepare_state_injection_surface
@@ -134,6 +145,10 @@ async def execute_attack(
     payload = generate_payload(objective, fleet_context)
 
     chain_id = str(uuid.uuid4())
+
+    # --- Narrative: GENERATE span ---
+    screen_flagged = "+example_goal" not in payload.model_used
+    emit_generate_span(chain_id, payload.model_used, objective.name, screen_flagged)
     session_id = f"session-redteam-{uuid.uuid4().hex[:8]}"
     user_id = "red-team-tester"
     app_name = "red_team_run"
@@ -156,6 +171,12 @@ async def execute_attack(
 
     run_app = App(name=app_name, root_agent=root_agent, plugins=plugins)
     runner = InMemoryRunner(app=run_app)
+
+    # --- Narrative: INJECT span ---
+    inject_tool = (
+        payload.target_tool if objective.injection_surface == "tool_response" else None
+    )
+    emit_inject_span(chain_id, objective.injection_surface, inject_tool)
 
     runner_error: str | None = None
     try:
@@ -209,6 +230,11 @@ async def execute_attack(
         tool_action_map=fleet_context.get("tool_action_map", {}),
     )
 
+    # --- Narrative: RESULT span ---
+    br_score = getattr(blast_radius, "score", None)
+    br_level = getattr(blast_radius, "max_sensitivity", None)
+    emit_result_span(chain_id, verdict, blocked_by, br_score, br_level)
+
     return AttackResult(
         objective_id=objective.id,
         payload=payload,
@@ -232,7 +258,11 @@ async def _execute_step_in_session(
 ) -> StepResult:
     """Execute a single campaign step within an existing persistent runner session."""
     chain_id = str(uuid.uuid4())
-    message_text = clean_query if step.surface in ("tool_response", "state_injection", "inter_agent") else step.payload
+    message_text = (
+        clean_query
+        if step.surface in ("tool_response", "state_injection", "inter_agent")
+        else step.payload
+    )
 
     runner_error: str | None = None
     try:
@@ -313,7 +343,16 @@ async def execute_campaign(
     )
     catalog = load_all_templates()
 
+    # Narrative chain ID shared by all narrative spans for this campaign.
+    narrative_chain_id = f"campaign-narrative-{uuid.uuid4().hex[:8]}"
+
+    # --- Narrative: RECON span ---
+    emit_recon_span(narrative_chain_id, fleet_map)
+
     initial_plan = await plan_campaign(objective.id, fleet_map, catalog)
+
+    # --- Narrative: PLAN span ---
+    emit_plan_span(narrative_chain_id, initial_plan)
 
     campaign = Campaign(
         id=f"campaign-{uuid.uuid4().hex[:8]}",
@@ -381,9 +420,7 @@ async def execute_campaign(
                 *[p for p in plugins if not isinstance(p, PoisonPlugin)],
             ]
         else:
-            run_app.plugins = [
-                p for p in plugins if not isinstance(p, PoisonPlugin)
-            ]
+            run_app.plugins = [p for p in plugins if not isinstance(p, PoisonPlugin)]
 
         step_result = await _execute_step_in_session(
             step=campaign_step,
@@ -396,14 +433,53 @@ async def execute_campaign(
         )
         campaign.add_step_result(step_result)
 
+        # --- Narrative: STEP span ---
+        emit_step_span(
+            chain_id=narrative_chain_id,
+            step_number=step_num,
+            surface=campaign_step.surface,
+            technique=campaign_step.technique,
+            target_tool=campaign_step.target_tool,
+            target_agent=campaign_step.target_agent,
+            verdict=step_result.verdict,
+            defense_layer=step_result.defense_layer,
+            denial_reasons=step_result.denial_reasons,
+        )
+
         if step_result.verdict == "allowed" or step_num >= max_steps:
             break
 
         if not steps_queue:
             adapted = await adapt_step(campaign, step_result)
             if adapted:
+                # --- Narrative: ADAPT span ---
+                signal = parse_defense_response(step_result)
+                emit_adapt_span(
+                    chain_id=narrative_chain_id,
+                    feedback_signal=f"Blocked by {signal.blocked_by or 'unknown'}.",
+                    new_technique=adapted.technique,
+                    new_surface=adapted.surface,
+                )
                 steps_queue.append(adapted)
 
         step_num += 1
+
+    # --- Narrative: COMPLETE span ---
+    blocked_count = sum(1 for r in campaign.results if r.verdict == "blocked")
+    total_steps = len(campaign.results)
+    agg_verdict = (
+        "allowed"
+        if any(r.verdict == "allowed" for r in campaign.results)
+        else "blocked"
+    )
+    max_br: float | None = None
+    for r in campaign.results:
+        if r.blast_radius is not None:
+            score = getattr(r.blast_radius, "score", None)
+            if score is not None and (max_br is None or score > max_br):
+                max_br = score
+    emit_complete_span(
+        narrative_chain_id, total_steps, blocked_count, agg_verdict, max_br
+    )
 
     return campaign

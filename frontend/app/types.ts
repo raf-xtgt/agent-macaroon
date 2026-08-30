@@ -78,3 +78,55 @@ export interface ArmorStatus {
 
 export type AttackMode = "single" | "campaign";
 
+// ---------------------------------------------------------------------------
+// Narrative span helpers
+// ---------------------------------------------------------------------------
+
+/** Phase labels for red-team narrative spans. */
+export type NarrativePhase =
+  | "RECON"
+  | "PLAN"
+  | "GENERATE"
+  | "STEP"
+  | "ADAPT"
+  | "COMPLETE"
+  | "INJECT"
+  | "RESULT";
+
+/** Map from action_requested values to narrative phase labels. */
+const ACTION_TO_PHASE: Record<string, NarrativePhase> = {
+  fleet_recon: "RECON",
+  plan_campaign: "PLAN",
+  generate_payload: "GENERATE",
+  execute_step: "STEP",
+  adapt_step: "ADAPT",
+  campaign_complete: "COMPLETE",
+  inject_surface: "INJECT",
+  attack_complete: "RESULT",
+};
+
+/** Returns true if the span was emitted by the red-team narrative system. */
+export function isNarrativeSpan(span: SpanData): boolean {
+  return span.agent_id.startsWith("red_team:");
+}
+
+/** Parse the narrative phase from a red-team span's action_requested field. */
+export function parseNarrativePhase(span: SpanData): NarrativePhase {
+  return ACTION_TO_PHASE[span.action_requested] ?? "RESULT";
+}
+
+/** Format a timestamp as HH:MM:SS.mmm for narrative timeline display. */
+export function formatNarrativeTimestamp(isoString: string): string {
+  try {
+    const d = new Date(isoString);
+    if (isNaN(d.getTime())) return isoString;
+    const hh = String(d.getHours()).padStart(2, "0");
+    const mm = String(d.getMinutes()).padStart(2, "0");
+    const ss = String(d.getSeconds()).padStart(2, "0");
+    const ms = String(d.getMilliseconds()).padStart(3, "0");
+    return `${hh}:${mm}:${ss}.${ms}`;
+  } catch {
+    return isoString;
+  }
+}
+

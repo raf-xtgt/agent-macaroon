@@ -13,6 +13,7 @@ import { LiveTree } from "./components/LiveTree";
 import { BlastRadiusPanel } from "./components/BlastRadiusPanel";
 import { FleetDefensePanel, type ImmunizationEntry, type RecentEventEntry } from "./components/FleetDefensePanel";
 import { RedTeamPanel } from "./components/RedTeamPanel";
+import { AttackNarrativePanel } from "./components/AttackNarrativePanel";
 
 function formatTimestamp(isoString: string): string {
   try {
@@ -393,6 +394,9 @@ export default function LiveDashboardPage() {
               isAttacking={isAttacking}
               attackResult={attackResult}
             />
+
+            {/* Attack Narrative — auto-shows when narrative spans arrive */}
+            <AttackNarrativePanel spans={spans} />
           </div>
         )}
       </div>

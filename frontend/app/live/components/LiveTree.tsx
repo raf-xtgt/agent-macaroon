@@ -2,6 +2,7 @@
 
 import { useState, useCallback } from "react";
 import type { SpanData } from "../../types";
+import { isNarrativeSpan } from "../../types";
 import { SpanRow } from "../../components/SpanRow";
 import { ScopeBar } from "./ScopeBar";
 
@@ -64,7 +65,10 @@ export function LiveTree({
   isAttacking = false,
   activeObjectiveName,
 }: LiveTreeProps) {
-  if (!spans || spans.length === 0) {
+  // Filter out red-team narrative spans — those are rendered by AttackNarrativePanel.
+  const defenseSpans = spans.filter((s) => !isNarrativeSpan(s));
+
+  if (!defenseSpans || defenseSpans.length === 0) {
     return (
       <div className="py-16 text-center space-y-3 font-mono text-slate">
         <span className="text-3xl text-seal-amber inline-block">⛨</span>
@@ -77,11 +81,11 @@ export function LiveTree({
   // Find root span details
   const [copied, setCopied] = useState(false);
 
-  const rootSpan = spans.find((s) => s.parent_span_id === null) || spans[0];
+  const rootSpan = defenseSpans.find((s) => s.parent_span_id === null) || defenseSpans[0];
   const effectiveChainId = rootSpan?.chain_id || chainId;
   const human = rootSpan?.human_subject_id || "anonymous";
   const purpose = rootSpan?.purpose || "compliance check on Google UK";
-  const lastSpanId = spans[spans.length - 1]?.span_id;
+  const lastSpanId = defenseSpans[defenseSpans.length - 1]?.span_id;
 
   const handleCopyChainId = useCallback(() => {
     if (!effectiveChainId) return;
@@ -95,7 +99,7 @@ export function LiveTree({
   const childrenMap = new Map<string | null, SpanData[]>();
   const spanIdSet = new Set<string>();
 
-  for (const span of spans) {
+  for (const span of defenseSpans) {
     spanIdSet.add(span.span_id);
     const parentId = span.parent_span_id;
     const list = childrenMap.get(parentId) || [];
@@ -155,7 +159,7 @@ export function LiveTree({
   }
 
   // Find root spans
-  const rootSpans = spans.filter(
+  const rootSpans = defenseSpans.filter(
     (s) => s.parent_span_id === null || !spanIdSet.has(s.parent_span_id)
   );
 
@@ -164,7 +168,7 @@ export function LiveTree({
   }
 
   // Fallback for detached or cyclic spans
-  for (const span of spans) {
+  for (const span of defenseSpans) {
     if (!visited.has(span.span_id)) {
       traverse(span, 0, "", true);
     }
