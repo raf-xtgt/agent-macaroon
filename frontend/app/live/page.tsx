@@ -344,7 +344,7 @@ export default function LiveDashboardPage() {
             </div>
 
             {/* Main area: Left sidebar (Red Team + Narrative) + Right (Tree) */}
-            <div className="grid grid-cols-1 lg:grid-cols-[380px_minmax(0,1fr)] gap-4 items-start">
+            <div className="grid grid-cols-1 lg:grid-cols-[450px_minmax(0,1fr)] gap-4 items-start">
               {/* Left Column: Red Team + Attack Narrative */}
               <div className="space-y-4 min-w-0">
                 <RedTeamPanel
