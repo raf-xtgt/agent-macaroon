@@ -7,6 +7,7 @@ from typing import Any
 from google import genai
 from google.genai import types
 
+from armor.screen import screen_text
 from .objectives import AttackObjective
 
 RED_TEAM_MODEL = os.environ.get(
@@ -103,6 +104,14 @@ def generate_payload(
     if not payload_text:
         payload_text = objective.example_goal
         model_used = "fallback"
+
+    # If the LLM payload evades the regex screen, fall back to the objective's
+    # example_goal which is designed to reliably trigger F5 quarantine.
+    if payload_text != objective.example_goal:
+        screen_result = screen_text(payload_text)
+        if not screen_result.flagged:
+            payload_text = objective.example_goal
+            model_used = f"{model_used}+example_goal"
 
     return AttackPayload(
         objective_id=objective.id,
