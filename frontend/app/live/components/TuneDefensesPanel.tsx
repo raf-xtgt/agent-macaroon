@@ -228,13 +228,13 @@ export function TuneDefensesPanel({
               Prompt Injection & Jailbreak Detection
             </legend>
 
-            <div className="flex flex-wrap items-center justify-between gap-3 text-xs">
-              <div className="flex items-center gap-4">
+            <div className="flex flex-wrap items-center justify-between gap-x-3 gap-y-2 text-xs">
+              <div className="flex flex-wrap items-center gap-x-3 gap-y-1.5">
                 <span className="text-slate text-[11px]">Confidence:</span>
                 {CONFIDENCE_LEVELS.map((level) => (
                   <label
                     key={level}
-                    className="flex items-center gap-1.5 cursor-pointer text-[11px] text-parchment"
+                    className="flex items-center gap-1 cursor-pointer text-[11px] text-parchment"
                   >
                     <input
                       type="radio"
@@ -244,12 +244,12 @@ export function TuneDefensesPanel({
                       onChange={() => setPiConfidence(level)}
                       className="accent-shield-blue focus:ring-shield-blue"
                     />
-                    <span>{level}</span>
+                    <span className="whitespace-nowrap">{level}</span>
                   </label>
                 ))}
               </div>
 
-              <label className="flex items-center gap-2 cursor-pointer text-[11px] text-parchment ml-auto">
+              <label className="flex items-center gap-2 cursor-pointer text-[11px] text-parchment">
                 <input
                   type="checkbox"
                   checked={piEnabled}

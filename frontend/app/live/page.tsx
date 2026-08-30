@@ -350,9 +350,9 @@ export default function LiveDashboardPage() {
             </div>
 
             {/* Main area: Left sidebar (Red Team + Narrative + Tune) + Right (Tree) */}
-            <div className="grid grid-cols-1 lg:grid-cols-[450px_minmax(0,1fr)] gap-4 items-start">
+            <div className="grid grid-cols-1 lg:grid-cols-[minmax(420px,480px)_minmax(0,1fr)] gap-4 items-start">
               {/* Left Column: Red Team + Attack Narrative + Tune Defenses */}
-              <div className="space-y-4 min-w-0">
+              <div className="space-y-4 min-w-0 overflow-hidden">
                 <RedTeamPanel
                   objectives={objectives}
                   selectedObjectiveId={selectedObjectiveId}

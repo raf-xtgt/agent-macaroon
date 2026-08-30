@@ -40,10 +40,22 @@ _client: ma.ModelArmorClient | None = None
 
 
 def _get_client() -> ma.ModelArmorClient:
-    """Get or lazily initialize the singleton Model Armor client."""
+    """Get or lazily initialize the singleton Model Armor client.
+
+    Uses a regional endpoint if GOOGLE_CLOUD_LOCATION is set to a region
+    (e.g., "us-central1"), or the default global endpoint if location is "global".
+    """
     global _client
     if _client is None:
-        _client = ma.ModelArmorClient()
+        location = os.environ.get("GOOGLE_CLOUD_LOCATION", "us-central1")
+        if location and location != "global":
+            _client = ma.ModelArmorClient(
+                client_options={
+                    "api_endpoint": f"modelarmor.{location}.rep.googleapis.com"
+                }
+            )
+        else:
+            _client = ma.ModelArmorClient()
     return _client
 
 
