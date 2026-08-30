@@ -9,10 +9,13 @@ import google.cloud.modelarmor_v1 as ma
 import pytest
 
 from armor.model_armor import (
+    DEFAULT_TEMPLATE_CONFIG,
     ModelArmorResult,
     _get_template_name,
     ensure_template_exists,
+    get_template_config,
     screen_with_model_armor,
+    tune_template,
 )
 from gateway.adapters.adk_plugin import GatewayPlugin
 from registry.agents_registry import AgentRegistry
@@ -237,3 +240,126 @@ async def test_gateway_plugin_deep_screens_with_model_armor() -> None:
         res["text"]
         == "[CONTENT QUARANTINED BY MODEL ARMOR (ML): PI/jailbreak detected — confidence: MEDIUM_AND_ABOVE]"
     )
+
+
+@patch("armor.model_armor._get_client")
+def test_tune_template_builds_and_calls_update_template(
+    mock_get_client: MagicMock,
+) -> None:
+    """Assert tune_template builds proper Template and UpdateTemplateRequest."""
+    mock_client = MagicMock()
+    mock_get_client.return_value = mock_client
+    mock_client.update_template.return_value = MagicMock()
+
+    config = {
+        "pi_and_jailbreak_enabled": True,
+        "pi_and_jailbreak_confidence": "HIGH",
+        "rai_filters": [
+            {"type": "DANGEROUS", "confidence_level": "LOW_AND_ABOVE"},
+            {"type": "HARASSMENT", "confidence_level": "MEDIUM_AND_ABOVE"},
+        ],
+        "enforcement_type": "INSPECT_ONLY",
+        "multi_language_detection": True,
+        "malicious_uri": True,
+        "sdp_basic": False,
+    }
+
+    with patch.dict(
+        os.environ,
+        {
+            "GOOGLE_CLOUD_PROJECT": "unit-test-proj",
+            "GOOGLE_CLOUD_LOCATION": "global",
+            "MODEL_ARMOR_TEMPLATE_ID": "screen-template-1",
+        },
+    ):
+        result = tune_template(config)
+
+    assert result["success"] is True
+    assert result["error"] is None
+    assert result["applied_config"]["pi_and_jailbreak_confidence"] == "HIGH"
+    assert result["applied_config"]["enforcement_type"] == "INSPECT_ONLY"
+    assert len(result["applied_config"]["rai_filters"]) == 2
+
+    assert mock_client.update_template.called
+    req = mock_client.update_template.call_args.kwargs["request"]
+    assert (
+        req.template.name
+        == "projects/unit-test-proj/locations/global/templates/screen-template-1"
+    )
+    assert list(req.update_mask.paths) == ["filter_config", "template_metadata"]
+
+
+@patch("armor.model_armor._get_client")
+def test_tune_template_handles_sdk_exception(
+    mock_get_client: MagicMock,
+) -> None:
+    """Assert tune_template catches SDK exceptions and returns success=False."""
+    mock_client = MagicMock()
+    mock_get_client.return_value = mock_client
+    mock_client.update_template.side_effect = RuntimeError("GCP API error")
+
+    result = tune_template({"pi_and_jailbreak_confidence": "HIGH"})
+    assert result["success"] is False
+    assert result["applied_config"] is None
+    assert "RuntimeError" in result["error"]
+
+
+@patch("armor.model_armor._get_client")
+def test_get_template_config_parses_template(
+    mock_get_client: MagicMock,
+) -> None:
+    """Assert get_template_config parses a Template response correctly."""
+    mock_client = MagicMock()
+    mock_get_client.return_value = mock_client
+
+    mock_template = ma.Template(
+        name="projects/p/locations/l/templates/t",
+        filter_config=ma.FilterConfig(
+            pi_and_jailbreak_filter_settings=ma.PiAndJailbreakFilterSettings(
+                filter_enforcement=1,
+                confidence_level=ma.DetectionConfidenceLevel.HIGH,
+            ),
+            rai_settings=ma.RaiFilterSettings(
+                rai_filters=[
+                    ma.RaiFilterSettings.RaiFilter(
+                        filter_type=ma.RaiFilterType.DANGEROUS,
+                        confidence_level=ma.DetectionConfidenceLevel.LOW_AND_ABOVE,
+                    )
+                ]
+            ),
+            malicious_uri_filter_settings=ma.MaliciousUriFilterSettings(
+                filter_enforcement=1,
+            ),
+        ),
+        template_metadata=ma.Template.TemplateMetadata(
+            enforcement_type=ma.Template.TemplateMetadata.EnforcementType.INSPECT_ONLY,
+            multi_language_detection=ma.Template.TemplateMetadata.MultiLanguageDetection(
+                enable_multi_language_detection=True
+            ),
+        ),
+    )
+    mock_client.get_template.return_value = mock_template
+
+    config = get_template_config()
+    assert config["pi_and_jailbreak_enabled"] is True
+    assert config["pi_and_jailbreak_confidence"] == "HIGH"
+    assert config["enforcement_type"] == "INSPECT_ONLY"
+    assert config["multi_language_detection"] is True
+    assert config["malicious_uri"] is True
+    assert config["sdp_basic"] is False
+    assert len(config["rai_filters"]) == 1
+    assert config["rai_filters"][0]["type"] == "DANGEROUS"
+    assert config["rai_filters"][0]["confidence_level"] == "LOW_AND_ABOVE"
+
+
+@patch("armor.model_armor._get_client")
+def test_get_template_config_fallback_on_exception(
+    mock_get_client: MagicMock,
+) -> None:
+    """Assert get_template_config returns default config when API call throws."""
+    mock_client = MagicMock()
+    mock_get_client.return_value = mock_client
+    mock_client.get_template.side_effect = Exception("Not found")
+
+    config = get_template_config()
+    assert config == DEFAULT_TEMPLATE_CONFIG

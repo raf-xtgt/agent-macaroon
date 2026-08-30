@@ -14,6 +14,7 @@ import { BlastRadiusPanel } from "./components/BlastRadiusPanel";
 import { FleetDefensePanel, type ImmunizationEntry, type RecentEventEntry } from "./components/FleetDefensePanel";
 import { RedTeamPanel } from "./components/RedTeamPanel";
 import { AttackNarrativePanel } from "./components/AttackNarrativePanel";
+import { TuneDefensesPanel } from "./components/TuneDefensesPanel";
 
 function formatTimestamp(isoString: string): string {
   try {
@@ -152,43 +153,43 @@ export default function LiveDashboardPage() {
     fetchObjectives();
   }, [apiBaseUrl]);
 
-  // 3. Poll Armor Status every 5 seconds for runtime immunization updates
-  useEffect(() => {
-    async function pollArmor() {
-      try {
-        const res = await fetch(`${apiBaseUrl}/armor/status`);
-        if (res.ok) {
-          const data: ArmorStatus = await res.json();
-          setArmorStatus(data);
+  // 3. Poll Armor Status for runtime immunization updates
+  const pollArmorStatus = useCallback(async () => {
+    try {
+      const res = await fetch(`${apiBaseUrl}/armor/status`);
+      if (res.ok) {
+        const data: ArmorStatus = await res.json();
+        setArmorStatus(data);
 
-          const currentPatterns = data.runtime_patterns || [];
-          const newEntries: ImmunizationEntry[] = [];
+        const currentPatterns = data.runtime_patterns || [];
+        const newEntries: ImmunizationEntry[] = [];
 
-          for (const pat of currentPatterns) {
-            if (!knownPatternsRef.current.has(pat)) {
-              knownPatternsRef.current.add(pat);
-              newEntries.push({
-                id: pat,
-                patternName: pat,
-                description: "Learned from blocked injection pattern & registered to Model Armor",
-                timestamp: new Date().toTimeString().split(" ")[0],
-              });
-            }
-          }
-
-          if (newEntries.length > 0) {
-            setImmunizationLog((prev) => [...newEntries, ...prev]);
+        for (const pat of currentPatterns) {
+          if (!knownPatternsRef.current.has(pat)) {
+            knownPatternsRef.current.add(pat);
+            newEntries.push({
+              id: pat,
+              patternName: pat,
+              description: "Learned from blocked injection pattern & registered to Model Armor",
+              timestamp: new Date().toTimeString().split(" ")[0],
+            });
           }
         }
-      } catch {
-        // Ignore status polling errors when offline
-      }
-    }
 
-    pollArmor();
-    const interval = setInterval(pollArmor, 5000);
-    return () => clearInterval(interval);
+        if (newEntries.length > 0) {
+          setImmunizationLog((prev) => [...newEntries, ...prev]);
+        }
+      }
+    } catch {
+      // Ignore status polling errors when offline
+    }
   }, [apiBaseUrl]);
+
+  useEffect(() => {
+    pollArmorStatus();
+    const interval = setInterval(pollArmorStatus, 5000);
+    return () => clearInterval(interval);
+  }, [pollArmorStatus]);
 
   // 4. Launch Red Team Attack Handler
   const handleLaunchAttack = useCallback(async () => {
@@ -323,11 +324,16 @@ export default function LiveDashboardPage() {
                 immunizationLog={immunizationLog}
                 violationsCount={violationsCount}
                 recentEvents={recentEvents}
+                apiBaseUrl={apiBaseUrl}
+              />
+              <TuneDefensesPanel
+                apiBaseUrl={apiBaseUrl}
+                onTuneApplied={pollArmorStatus}
               />
             </div>
           </div>
         ) : (
-          /* 2. Active Session Layout — wireframe: Red Team + Narrative left, Tree right, Blast + Defense bottom */
+          /* 2. Active Session Layout — wireframe: Red Team + Narrative + Tune left, Tree right, Blast + Defense bottom */
           <div className="p-4 sm:p-6 space-y-4">
             {/* Top Toolbar / Reset */}
             <div className="flex items-center justify-between text-xs font-mono text-slate border-b border-slate/20 pb-3">
@@ -343,9 +349,9 @@ export default function LiveDashboardPage() {
               </button>
             </div>
 
-            {/* Main area: Left sidebar (Red Team + Narrative) + Right (Tree) */}
+            {/* Main area: Left sidebar (Red Team + Narrative + Tune) + Right (Tree) */}
             <div className="grid grid-cols-1 lg:grid-cols-[450px_minmax(0,1fr)] gap-4 items-start">
-              {/* Left Column: Red Team + Attack Narrative */}
+              {/* Left Column: Red Team + Attack Narrative + Tune Defenses */}
               <div className="space-y-4 min-w-0">
                 <RedTeamPanel
                   objectives={objectives}
@@ -359,6 +365,11 @@ export default function LiveDashboardPage() {
                 />
 
                 <AttackNarrativePanel spans={spans} />
+
+                <TuneDefensesPanel
+                  apiBaseUrl={apiBaseUrl}
+                  onTuneApplied={pollArmorStatus}
+                />
               </div>
 
               {/* Right Column: Live Delegation Tree (spans full height) */}
@@ -396,6 +407,7 @@ export default function LiveDashboardPage() {
                 immunizationLog={immunizationLog}
                 violationsCount={violationsCount}
                 recentEvents={recentEvents}
+                apiBaseUrl={apiBaseUrl}
               />
             </div>
           </div>

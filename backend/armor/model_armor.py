@@ -10,6 +10,7 @@ from dataclasses import dataclass
 from typing import Any
 
 import google.cloud.modelarmor_v1 as ma
+from google.protobuf.field_mask_pb2 import FieldMask
 
 
 @dataclass(frozen=True)
@@ -250,3 +251,302 @@ def screen_with_model_armor(text: str) -> ModelArmorResult:
             raw_filter_results=None,
             error=f"{type(exc).__name__}: {exc}",
         )
+
+
+DEFAULT_TEMPLATE_CONFIG: dict[str, Any] = {
+    "pi_and_jailbreak_enabled": True,
+    "pi_and_jailbreak_confidence": "LOW_AND_ABOVE",
+    "rai_filters": [
+        {"type": "DANGEROUS", "confidence_level": "MEDIUM_AND_ABOVE"},
+    ],
+    "enforcement_type": "INSPECT_AND_BLOCK",
+    "multi_language_detection": True,
+    "malicious_uri": True,
+    "sdp_basic": False,
+}
+
+
+def get_template_config() -> dict[str, Any]:
+    """Retrieve the normalized Model Armor filter configuration.
+
+    Fetches the live template from the Model Armor API and maps its settings
+    to a standard dictionary. If the API call fails or template does not exist,
+    returns the default configuration dictionary.
+    """
+    try:
+        client = _get_client()
+        template_name = _get_template_name()
+        template = client.get_template(
+            request=ma.GetTemplateRequest(name=template_name)
+        )
+
+        fc = getattr(template, "filter_config", None)
+        tm = getattr(template, "template_metadata", None)
+
+        # PI & Jailbreak
+        pi_settings = (
+            getattr(fc, "pi_and_jailbreak_filter_settings", None) if fc else None
+        )
+        pi_conf = "LOW_AND_ABOVE"
+        pi_enabled = True
+        if pi_settings:
+            raw_conf = getattr(pi_settings, "confidence_level", None)
+            if raw_conf:
+                try:
+                    pi_conf = ma.DetectionConfidenceLevel(raw_conf).name
+                except Exception:  # noqa: BLE001
+                    pi_conf = str(raw_conf)
+            enf = getattr(pi_settings, "filter_enforcement", None)
+            if enf is not None:
+                pi_enabled = enf == 1 or str(enf).endswith("ENABLED")
+
+        # RAI Filters
+        rai_settings = getattr(fc, "rai_settings", None) if fc else None
+        rai_filters_list = []
+        if rai_settings and getattr(rai_settings, "rai_filters", None):
+            for rf in rai_settings.rai_filters:
+                ft = getattr(rf, "filter_type", None)
+                cl = getattr(rf, "confidence_level", None)
+                try:
+                    ft_str = (
+                        ma.RaiFilterType(ft).name if ft is not None else "DANGEROUS"
+                    )
+                except Exception:  # noqa: BLE001
+                    ft_str = str(ft)
+                try:
+                    cl_str = (
+                        ma.DetectionConfidenceLevel(cl).name
+                        if cl is not None
+                        else "MEDIUM_AND_ABOVE"
+                    )
+                except Exception:  # noqa: BLE001
+                    cl_str = str(cl)
+                rai_filters_list.append({"type": ft_str, "confidence_level": cl_str})
+
+        # Enforcement type
+        enf_type_str = "INSPECT_AND_BLOCK"
+        if tm:
+            et = getattr(tm, "enforcement_type", None)
+            if et is not None:
+                try:
+                    enf_type_str = ma.Template.TemplateMetadata.EnforcementType(et).name
+                except Exception:  # noqa: BLE001
+                    enf_type_str = str(et)
+
+        # Multi language detection
+        ml_enabled = False
+        if tm and getattr(tm, "multi_language_detection", None):
+            ml_enabled = bool(
+                getattr(
+                    tm.multi_language_detection,
+                    "enable_multi_language_detection",
+                    False,
+                )
+            )
+
+        # Malicious URI
+        uri_settings = (
+            getattr(fc, "malicious_uri_filter_settings", None) if fc else None
+        )
+        uri_enabled = False
+        if uri_settings:
+            enf = getattr(uri_settings, "filter_enforcement", None)
+            uri_enabled = enf == 1 or str(enf).endswith("ENABLED")
+
+        # Basic SDP
+        sdp_settings = getattr(fc, "sdp_settings", None) if fc else None
+        sdp_enabled = False
+        if sdp_settings and getattr(sdp_settings, "basic_config", None):
+            enf = getattr(sdp_settings.basic_config, "filter_enforcement", None)
+            sdp_enabled = enf == 1 or str(enf).endswith("ENABLED")
+
+        return {
+            "pi_and_jailbreak_enabled": pi_enabled,
+            "pi_and_jailbreak_confidence": pi_conf,
+            "rai_filters": rai_filters_list,
+            "enforcement_type": enf_type_str,
+            "multi_language_detection": ml_enabled,
+            "malicious_uri": uri_enabled,
+            "sdp_basic": sdp_enabled,
+        }
+    except Exception:  # noqa: BLE001
+        return dict(DEFAULT_TEMPLATE_CONFIG)
+
+
+def tune_template(config: dict[str, Any]) -> dict[str, Any]:
+    """Update the live Model Armor template with tuned filter settings.
+
+    Args:
+        config: Dictionary containing tuning configuration:
+            - pi_and_jailbreak_enabled: bool
+            - pi_and_jailbreak_confidence: str ("LOW_AND_ABOVE", "MEDIUM_AND_ABOVE", "HIGH")
+            - rai_filters: list[dict[str, str]] with "type" and "confidence_level"
+            - enforcement_type: str ("INSPECT_AND_BLOCK", "INSPECT_ONLY")
+            - multi_language_detection: bool
+            - malicious_uri: bool
+            - sdp_basic: bool
+
+    Returns:
+        Dictionary with "success": bool, "applied_config": dict, and optional "error": str.
+    """
+    try:
+        client = _get_client()
+        template_name = _get_template_name()
+
+        # Parse PI confidence
+        pi_conf_str = config.get("pi_and_jailbreak_confidence", "LOW_AND_ABOVE")
+        pi_conf = getattr(
+            ma.DetectionConfidenceLevel,
+            pi_conf_str,
+            ma.DetectionConfidenceLevel.LOW_AND_ABOVE,
+        )
+
+        # Parse PI enforcement
+        pi_enabled = config.get("pi_and_jailbreak_enabled", True)
+        pi_enf_cls = getattr(
+            ma.PiAndJailbreakFilterSettings,
+            "FilterEnforcement",
+            getattr(
+                ma.PiAndJailbreakFilterSettings,
+                "PiAndJailbreakFilterEnforcement",
+                None,
+            ),
+        )
+        if pi_enf_cls:
+            pi_enf_val = getattr(
+                pi_enf_cls,
+                "ENABLED" if pi_enabled else "DISABLED",
+                1 if pi_enabled else 2,
+            )
+        else:
+            pi_enf_val = 1 if pi_enabled else 2
+
+        # Parse RAI filters
+        rai_filters_raw = config.get("rai_filters", [])
+        parsed_rai_filters = []
+        for rf in rai_filters_raw:
+            rf_type_str = rf.get("type", "DANGEROUS")
+            rf_conf_str = rf.get("confidence_level", "MEDIUM_AND_ABOVE")
+            rf_type = getattr(ma.RaiFilterType, rf_type_str, ma.RaiFilterType.DANGEROUS)
+            rf_conf = getattr(
+                ma.DetectionConfidenceLevel,
+                rf_conf_str,
+                ma.DetectionConfidenceLevel.MEDIUM_AND_ABOVE,
+            )
+            parsed_rai_filters.append(
+                ma.RaiFilterSettings.RaiFilter(
+                    filter_type=rf_type,
+                    confidence_level=rf_conf,
+                )
+            )
+
+        # Parse Malicious URI enforcement
+        uri_enabled = config.get("malicious_uri", True)
+        uri_enf_cls = getattr(
+            ma.MaliciousUriFilterSettings,
+            "MaliciousUriFilterEnforcement",
+            getattr(ma.MaliciousUriFilterSettings, "FilterEnforcement", None),
+        )
+        if uri_enf_cls:
+            uri_enf_val = getattr(
+                uri_enf_cls,
+                "ENABLED" if uri_enabled else "DISABLED",
+                1 if uri_enabled else 2,
+            )
+        else:
+            uri_enf_val = 1 if uri_enabled else 2
+
+        # Parse Basic SDP enforcement
+        sdp_enabled = config.get("sdp_basic", False)
+        sdp_enf_cls = getattr(
+            ma.SdpBasicConfig,
+            "SdpBasicConfigEnforcement",
+            getattr(ma.SdpBasicConfig, "FilterEnforcement", None),
+        )
+        if sdp_enf_cls:
+            sdp_enf_val = getattr(
+                sdp_enf_cls,
+                "ENABLED" if sdp_enabled else "DISABLED",
+                1 if sdp_enabled else 2,
+            )
+        else:
+            sdp_enf_val = 1 if sdp_enabled else 2
+
+        filter_config = ma.FilterConfig(
+            pi_and_jailbreak_filter_settings=ma.PiAndJailbreakFilterSettings(
+                filter_enforcement=pi_enf_val,
+                confidence_level=pi_conf,
+            ),
+            rai_settings=ma.RaiFilterSettings(
+                rai_filters=parsed_rai_filters,
+            ),
+            malicious_uri_filter_settings=ma.MaliciousUriFilterSettings(
+                filter_enforcement=uri_enf_val,
+            ),
+            sdp_settings=ma.SdpFilterSettings(
+                basic_config=ma.SdpBasicConfig(
+                    filter_enforcement=sdp_enf_val,
+                ),
+            ),
+        )
+
+        # Parse Enforcement Type
+        enf_type_str = config.get("enforcement_type", "INSPECT_AND_BLOCK")
+        enf_type = getattr(
+            ma.Template.TemplateMetadata.EnforcementType,
+            enf_type_str,
+            ma.Template.TemplateMetadata.EnforcementType.INSPECT_AND_BLOCK,
+        )
+
+        # Parse Multi-language detection
+        ml_enabled = config.get("multi_language_detection", True)
+        ml_detection = ma.Template.TemplateMetadata.MultiLanguageDetection(
+            enable_multi_language_detection=ml_enabled,
+        )
+
+        template_metadata = ma.Template.TemplateMetadata(
+            enforcement_type=enf_type,
+            multi_language_detection=ml_detection,
+        )
+
+        template = ma.Template(
+            name=template_name,
+            filter_config=filter_config,
+            template_metadata=template_metadata,
+        )
+
+        update_mask = FieldMask(paths=["filter_config", "template_metadata"])
+        client.update_template(
+            request=ma.UpdateTemplateRequest(
+                template=template,
+                update_mask=update_mask,
+            )
+        )
+
+        applied = {
+            "pi_and_jailbreak_enabled": pi_enabled,
+            "pi_and_jailbreak_confidence": pi_conf_str,
+            "rai_filters": [
+                {
+                    "type": rf.get("type", "DANGEROUS"),
+                    "confidence_level": rf.get("confidence_level", "MEDIUM_AND_ABOVE"),
+                }
+                for rf in rai_filters_raw
+            ],
+            "enforcement_type": enf_type_str,
+            "multi_language_detection": ml_enabled,
+            "malicious_uri": uri_enabled,
+            "sdp_basic": sdp_enabled,
+        }
+
+        return {
+            "success": True,
+            "applied_config": applied,
+            "error": None,
+        }
+    except Exception as exc:  # noqa: BLE001
+        return {
+            "success": False,
+            "applied_config": None,
+            "error": f"{type(exc).__name__}: {exc}",
+        }

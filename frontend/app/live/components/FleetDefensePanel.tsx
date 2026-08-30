@@ -1,5 +1,4 @@
-"use client";
-
+import { useState } from "react";
 import type { ArmorStatus } from "../../types";
 
 export interface ImmunizationEntry {
@@ -20,6 +19,7 @@ interface FleetDefensePanelProps {
   immunizationLog: ImmunizationEntry[];
   violationsCount?: number;
   recentEvents?: RecentEventEntry[];
+  apiBaseUrl?: string;
 }
 
 export function FleetDefensePanel({
@@ -27,7 +27,10 @@ export function FleetDefensePanel({
   immunizationLog,
   violationsCount = 0,
   recentEvents = [],
+  apiBaseUrl,
 }: FleetDefensePanelProps) {
+  const [isExporting, setIsExporting] = useState<boolean>(false);
+  const [exportStatus, setExportStatus] = useState<string | null>(null);
   const runtimeCount = armorStatus?.runtime_patterns?.length ?? immunizationLog.length;
   const activeCount = armorStatus?.active_pattern_count ?? (12 + runtimeCount);
   const staticCount = Math.max(12, activeCount - runtimeCount);
@@ -133,6 +136,65 @@ export function FleetDefensePanel({
               </div>
             ))}
           </div>
+        </div>
+      )}
+
+      {/* Export Defense Profile Action */}
+      {apiBaseUrl && (
+        <div className="pt-2 border-t border-slate/20 flex items-center justify-between gap-2">
+          <button
+            type="button"
+            onClick={async () => {
+              if (!apiBaseUrl || isExporting) return;
+              setIsExporting(true);
+              setExportStatus(null);
+              try {
+                const res = await fetch(`${apiBaseUrl}/armor/export`);
+                if (res.ok) {
+                  const data = await res.json();
+                  const jsonStr = JSON.stringify(data, null, 2);
+                  const blob = new Blob([jsonStr], {
+                    type: "application/json",
+                  });
+                  const url = URL.createObjectURL(blob);
+                  const a = document.createElement("a");
+                  a.href = url;
+                  a.download = "agent-macaroon-defense-profile.json";
+                  document.body.appendChild(a);
+                  a.click();
+                  document.body.removeChild(a);
+                  URL.revokeObjectURL(url);
+                  setExportStatus("Downloaded ✓");
+                  setTimeout(() => setExportStatus(null), 3000);
+                } else {
+                  setExportStatus("Export failed");
+                }
+              } catch {
+                setExportStatus("Export failed");
+              } finally {
+                setIsExporting(false);
+              }
+            }}
+            disabled={isExporting}
+            className="px-3 py-1.5 bg-shield-blue/10 border border-shield-blue/40 hover:bg-shield-blue/20 text-shield-blue text-xs font-sans font-medium rounded transition-colors disabled:opacity-40 cursor-pointer flex items-center gap-1.5"
+          >
+            <span>↓</span>
+            <span>
+              {isExporting ? "Exporting..." : "Export Defense Profile"}
+            </span>
+          </button>
+
+          {exportStatus && (
+            <span
+              className={`text-[11px] font-mono ${
+                exportStatus.includes("✓")
+                  ? "text-ledger-green"
+                  : "text-ledger-red"
+              }`}
+            >
+              {exportStatus}
+            </span>
+          )}
         </div>
       )}
     </div>

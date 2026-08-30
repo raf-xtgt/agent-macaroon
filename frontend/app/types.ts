@@ -78,6 +78,60 @@ export interface ArmorStatus {
 
 export type AttackMode = "single" | "campaign";
 
+export type ConfidenceLevel = "LOW_AND_ABOVE" | "MEDIUM_AND_ABOVE" | "HIGH";
+export type RaiType = "DANGEROUS" | "HARASSMENT" | "HATE_SPEECH" | "SEXUALLY_EXPLICIT";
+export type EnforcementType = "INSPECT_AND_BLOCK" | "INSPECT_ONLY";
+
+export interface RaiFilterConfig {
+  type: RaiType;
+  confidence_level: ConfidenceLevel;
+}
+
+export interface TuneConfig {
+  pi_and_jailbreak_enabled: boolean;
+  pi_and_jailbreak_confidence: ConfidenceLevel;
+  rai_filters: RaiFilterConfig[];
+  enforcement_type: EnforcementType;
+  multi_language_detection: boolean;
+  malicious_uri: boolean;
+  sdp_basic: boolean;
+}
+
+export interface TuneResponse {
+  success: boolean;
+  error?: string | null;
+  applied_config?: TuneConfig | null;
+}
+
+export interface DefenseProfile {
+  agent_macaroon_config: {
+    version: string;
+    generated_at: string;
+    target_fleet: string;
+    fleet_summary: {
+      agent_count: number;
+      tool_count: number;
+    };
+    gateway_plugin: {
+      max_depth: number;
+      enable_model_armor: boolean;
+      entry_agent_id: string;
+    };
+    initial_scope: string[];
+    registry_ceilings: Record<string, string[]>;
+    tool_action_map: Record<string, string>;
+    model_armor: {
+      template_id: string;
+      config: TuneConfig;
+    };
+    immunization: {
+      runtime_pattern_count: number;
+      runtime_patterns: string[];
+      total_active_patterns: number;
+    };
+  };
+}
+
 // ---------------------------------------------------------------------------
 // Narrative span helpers
 // ---------------------------------------------------------------------------
