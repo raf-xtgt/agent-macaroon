@@ -10,10 +10,7 @@ from google.genai import types
 from .objectives import AttackObjective
 
 RED_TEAM_MODEL = os.environ.get(
-    "RED_TEAM_MODEL", "meta/llama-4-maverick-17b-128e-instruct-maas"
-)
-RED_TEAM_FALLBACK = os.environ.get(
-    "RED_TEAM_FALLBACK", "meta/llama-3.3-70b-instruct-maas"
+    "RED_TEAM_MODEL", "meta/llama-3.3-70b-instruct-maas"
 )
 _RED_TEAM_LOCATION = os.environ.get("GOOGLE_CLOUD_LOCATION", "us-central1")
 
@@ -76,7 +73,7 @@ def generate_payload(
     user_prompt = f"Write a test input for security test: {objective.name}"
 
     # Try primary model first, then fallback model, then Gemini, then offline fallback
-    models_to_try = [model, RED_TEAM_FALLBACK, "gemini-2.5-flash"]
+    models_to_try = [model, "gemini-2.5-flash"]
     payload_text: str | None = None
     model_used = "fallback"
 

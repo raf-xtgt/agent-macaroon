@@ -138,17 +138,20 @@ class AgentRegistry:
         """Walk an ADK agent hierarchy and derive scope ceilings from tools.
 
         Returns a dict mapping agent_id to the set of action verbs it needs,
-        derived from its tools and whether it has sub-agents (adds "delegate").
+        derived from its own tools plus the union of all descendant tool verbs.
+        Coordinator agents (SequentialAgent, ParallelAgent) that hold no tools
+        themselves inherit their descendants' verbs so that scope attenuation
+        does not strip permissions needed by downstream leaf agents.
         """
         config: dict[str, set[str]] = {}
 
-        def _walk(agent: Any) -> None:
+        def _walk(agent: Any) -> set[str]:
             name = getattr(agent, "name", None)
             if name is None:
-                return
+                return set()
 
-            verbs: set[str] = set()
-
+            # Collect this agent's own tool verbs
+            own_verbs: set[str] = set()
             tools = getattr(agent, "tools", None) or []
             for tool in tools:
                 tool_name = getattr(tool, "name", None) or getattr(
@@ -157,16 +160,24 @@ class AgentRegistry:
                 if tool_name:
                     action = tool_action_map.get(tool_name)
                     if action:
-                        verbs.add(action)
+                        own_verbs.add(action)
 
+            # Recurse into sub-agents and collect the union of descendant verbs
+            descendant_verbs: set[str] = set()
             sub_agents = getattr(agent, "sub_agents", None) or []
-            if sub_agents:
-                verbs.add("delegate")
-
-            config[name] = verbs
-
             for sub in sub_agents:
-                _walk(sub)
+                descendant_verbs |= _walk(sub)
+
+            if sub_agents:
+                own_verbs.add("delegate")
+
+            # Ceiling = own tools + everything descendants need (least privilege
+            # for the coordinator is "everything it must be able to pass through")
+            ceiling = own_verbs | descendant_verbs
+            config[name] = ceiling
+
+            # Return this subtree's full verb set so parent coordinators inherit it
+            return ceiling
 
         _walk(root_agent)
         return config

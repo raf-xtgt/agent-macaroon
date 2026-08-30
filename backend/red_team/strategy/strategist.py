@@ -6,7 +6,7 @@ from dataclasses import dataclass, field
 from google import genai
 from google.genai import types
 
-from red_team.agent import RED_TEAM_FALLBACK, RED_TEAM_MODEL
+from red_team.agent import RED_TEAM_MODEL
 from red_team.catalog.templates import AttackTemplate
 from red_team.recon.fleet_map import FleetMap
 
@@ -101,7 +101,7 @@ async def plan_campaign(
     Returns:
         CampaignPlan: Structured attack campaign.
     """
-    models_to_try = [model, RED_TEAM_FALLBACK, "gemini-2.5-flash"]
+    models_to_try = [model, "gemini-2.5-flash"]
     weakest = fleet_map.weakest_agents()[:3]
     boundaries = fleet_map.boundary_agents()
 
@@ -188,7 +188,7 @@ async def adapt_step(
         return None
 
     signal = parse_defense_response(last_result)
-    models_to_try = [model, RED_TEAM_FALLBACK, "gemini-2.5-flash"]
+    models_to_try = [model, "gemini-2.5-flash"]
 
     user_prompt = (
         f"Campaign Objective: {campaign.objective}\n"

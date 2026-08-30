@@ -18,21 +18,19 @@ from red_team.objectives import OBJECTIVES
 client = TestClient(app)
 
 
-def test_generate_payload_uses_maverick_model_first() -> None:
-    """Assert generate_payload attempts Llama 4 Maverick as the primary model."""
+def test_generate_payload_uses_primary_model_first() -> None:
+    """Assert generate_payload attempts the configured primary model first."""
     objective = OBJECTIVES["exfiltrate_insider_data"]
     fleet_context = {"agent_names": [], "tool_names": [], "tool_action_map": {}}
 
     mock_client = MagicMock()
-    mock_response = SimpleNamespace(text="Llama 4 generated test payload")
+    mock_response = SimpleNamespace(text="LLM generated test payload")
     mock_client.models.generate_content.return_value = mock_response
 
     with patch("red_team.agent.genai.Client", return_value=mock_client):
         payload = generate_payload(objective, fleet_context)
 
     assert payload.model_used == RED_TEAM_MODEL
-    assert "maverick" in payload.model_used.lower()
-    # Check that generate_content was called with the primary model
     call_kwargs = mock_client.models.generate_content.call_args.kwargs
     assert call_kwargs["model"] == RED_TEAM_MODEL
 
