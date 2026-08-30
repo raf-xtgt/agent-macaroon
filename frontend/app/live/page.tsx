@@ -306,7 +306,7 @@ export default function LiveDashboardPage() {
               </p>
             </div>
 
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-6 max-w-4xl mx-auto">
+            <div className="flex flex-col gap-6 max-w-2xl mx-auto w-full">
               <RedTeamPanel
                 objectives={objectives}
                 selectedObjectiveId={selectedObjectiveId}
@@ -366,7 +366,7 @@ export default function LiveDashboardPage() {
                 </div>
               </div>
 
-              {/* Right Column: Stacked Blast Radius & Fleet Defense */}
+              {/* Right Column: Blast Radius & Fleet Defense */}
               <div className="space-y-4">
                 <BlastRadiusPanel
                   blastRadius={attackResult?.blast_radius || null}
@@ -382,7 +382,7 @@ export default function LiveDashboardPage() {
               </div>
             </div>
 
-            {/* Bottom Red Team Bar */}
+            {/* Red Team Panel — full width below the tree */}
             <RedTeamPanel
               objectives={objectives}
               selectedObjectiveId={selectedObjectiveId}
