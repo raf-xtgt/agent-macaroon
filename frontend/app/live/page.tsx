@@ -267,8 +267,8 @@ export default function LiveDashboardPage() {
   }
 
   return (
-    <main className="min-h-screen bg-ink text-parchment flex flex-col items-center p-3 sm:p-6 md:p-8 font-sans">
-      <div className="w-full max-w-7xl border border-slate/30 rounded-lg shadow-2xl bg-ink overflow-hidden flex flex-col space-y-0">
+    <main className="min-h-screen bg-ink text-parchment flex flex-col items-center px-2 sm:px-4 md:px-6 py-3 sm:py-6 font-sans">
+      <div className="w-full max-w-[1920px] border border-slate/30 rounded-lg shadow-2xl bg-ink overflow-hidden flex flex-col space-y-0">
         {/* Header */}
         <header className="px-5 sm:px-6 py-4 border-b border-slate/30 flex items-center justify-between bg-ink/90">
           <div className="flex items-center gap-2.5 text-seal-amber font-mono font-semibold tracking-wide">
@@ -344,7 +344,7 @@ export default function LiveDashboardPage() {
             </div>
 
             {/* Main area: Left sidebar (Red Team + Narrative) + Right (Tree) */}
-            <div className="grid grid-cols-1 lg:grid-cols-[320px_minmax(0,1fr)] gap-4 items-start">
+            <div className="grid grid-cols-1 lg:grid-cols-[380px_minmax(0,1fr)] gap-4 items-start">
               {/* Left Column: Red Team + Attack Narrative */}
               <div className="space-y-4 min-w-0">
                 <RedTeamPanel

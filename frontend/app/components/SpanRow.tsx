@@ -70,7 +70,7 @@ export function SpanRow({
       {/* Desktop layout */}
       <div
         onClick={() => setExpanded(!expanded)}
-        className="hidden md:flex items-baseline justify-between gap-4 cursor-pointer select-none font-mono text-sm"
+        className="hidden md:flex items-baseline gap-3 cursor-pointer select-none font-mono text-sm flex-wrap"
         role="button"
         tabIndex={0}
         onKeyDown={(e) => {
@@ -81,59 +81,52 @@ export function SpanRow({
         }}
         aria-expanded={expanded}
       >
-        <div className="flex items-baseline gap-2 min-w-0 flex-1">
-          <span className="text-slate select-none whitespace-pre">{treePrefix}</span>
-          <span
-            className={
-              isDeny
-                ? "text-ledger-red font-bold"
-                : isIssue
-                ? "text-seal-amber font-bold"
-                : "text-parchment"
-            }
-          >
-            {nodeSymbol}
-          </span>
-          <span className="font-semibold text-parchment truncate">{span.agent_id}</span>
-          <span className="text-slate truncate">{span.action_requested}</span>
-        </div>
-
-        <div className="flex items-center gap-4 shrink-0">
-          <span className="text-slate text-xs">{timeFormatted}</span>
-          <span
-            className={`px-2 py-0.5 rounded text-xs font-mono font-medium tracking-wide border ${stampColor}`}
-          >
-            {stampLabel}
-          </span>
-        </div>
+        <span className="text-slate select-none whitespace-pre">{treePrefix}</span>
+        <span
+          className={
+            isDeny
+              ? "text-ledger-red font-bold"
+              : isIssue
+              ? "text-seal-amber font-bold"
+              : "text-parchment"
+          }
+        >
+          {nodeSymbol}
+        </span>
+        <span className="font-semibold text-parchment">{span.agent_id}</span>
+        <span className="text-slate">{span.action_requested}</span>
+        <span className="text-slate text-xs ml-auto shrink-0">{timeFormatted}</span>
+        <span
+          className={`px-2 py-0.5 rounded text-xs font-mono font-medium tracking-wide border shrink-0 ${stampColor}`}
+        >
+          {stampLabel}
+        </span>
       </div>
 
       {/* Inline reason / metadata for desktop */}
-      <div className="hidden md:flex items-center justify-between text-xs font-mono text-slate pl-4 ml-6 mt-1">
-        <div className="truncate flex-1 flex items-center gap-2">
-          {span.defense_layer && (
-            <span className="px-1.5 py-0.5 rounded text-[10px] font-semibold border border-slate/30 bg-slate/10 text-shield-blue shrink-0">
-              {span.defense_layer.replace(/^F\d+_/, "").replace(/_/g, " ").toUpperCase()}
-            </span>
-          )}
-          {isScreen ? (
-            isDeny ? (
-              <span className="text-ledger-red truncate">quarantined: {span.reason}</span>
-            ) : (
-              <span className="text-slate">clean</span>
-            )
+      <div className="hidden md:flex items-center gap-2 text-xs font-mono text-slate pl-4 ml-6 mt-1 flex-wrap">
+        {span.defense_layer && (
+          <span className="px-1.5 py-0.5 rounded text-[10px] font-semibold border border-slate/30 bg-slate/10 text-shield-blue shrink-0">
+            {span.defense_layer.replace(/^F\d+_/, "").replace(/_/g, " ").toUpperCase()}
+          </span>
+        )}
+        {isScreen ? (
+          isDeny ? (
+            <span className="text-ledger-red break-words">quarantined: {span.reason}</span>
           ) : (
-            <span className={`truncate ${isDeny ? "text-ledger-red" : "text-slate"}`}>
-              {span.reason ? `reason: ${span.reason}` : ""}
-            </span>
-          )}
-        </div>
+            <span className="text-slate">clean</span>
+          )
+        ) : (
+          <span className={`break-words ${isDeny ? "text-ledger-red" : "text-slate"}`}>
+            {span.reason ? `reason: ${span.reason}` : ""}
+          </span>
+        )}
         <a
           href={traceUrl}
           target="_blank"
           rel="noopener noreferrer"
           onClick={(e) => e.stopPropagation()}
-          className="text-slate/70 hover:text-seal-amber text-xs ml-4 shrink-0 hover:underline"
+          className="text-slate/70 hover:text-seal-amber text-xs ml-auto shrink-0 hover:underline"
         >
           view trace ↗
         </a>
