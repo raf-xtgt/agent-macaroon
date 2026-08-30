@@ -15,9 +15,13 @@ from .agent import AttackPayload, generate_payload
 from .catalog.templates import load_all_templates
 from .objectives import AttackObjective
 from .poison_plugin import PoisonPlugin
-from .recon.fleet_map import build_fleet_map
+from .recon.fleet_map import FleetMap, build_fleet_map
 from .strategy.campaign import Campaign, CampaignStep, StepResult
 from .strategy.strategist import PlannedStep, adapt_step, plan_campaign
+from .surfaces.inter_agent import prepare_inter_agent_surface
+from .surfaces.state_injection import prepare_state_injection_surface
+from .surfaces.tool_response import prepare_tool_response_surface
+from .surfaces.user_message import prepare_user_message_surface
 
 
 @dataclass
@@ -50,23 +54,83 @@ def _find_tool_owner_agent(agent: Any, target_tool: str) -> str | None:
     return None
 
 
+def _prepare_surface(
+    step: CampaignStep,
+    objective: AttackObjective,
+    clean_query: str,
+) -> dict[str, Any]:
+    """Route a campaign step to the correct surface helper."""
+    if step.surface == "tool_response":
+        target_tool = step.target_tool or (
+            objective.target_tools[0] if objective.target_tools else ""
+        )
+        return prepare_tool_response_surface(
+            payload=step.payload,
+            target_tool=target_tool,
+            clean_query=clean_query,
+        )
+
+    if step.surface == "state_injection":
+        return prepare_state_injection_surface(
+            payload=step.payload,
+            target_tool=step.target_tool or "",
+            target_state_key=step.target_state_key or "injected_state",
+            clean_query=clean_query,
+        )
+
+    if step.surface == "inter_agent":
+        return prepare_inter_agent_surface(
+            payload=step.payload,
+            target_agent=step.target_agent or "",
+            target_state_key=step.target_state_key or "injected_instruction",
+            clean_query=clean_query,
+        )
+
+    return prepare_user_message_surface(payload=step.payload)
+
+
+def extract_fleet_context(
+    governed_app: App,
+    fleet_map: FleetMap | None = None,
+) -> dict[str, Any]:
+    """Extract agent names, tool names, and action mappings from the governed App.
+
+    Accepts an optional pre-built FleetMap to avoid redundant tree walks.
+    """
+    root_agent = getattr(governed_app, "root_agent", None)
+
+    tool_action_map: dict[str, str] = {}
+    for plugin in getattr(governed_app, "plugins", []):
+        if hasattr(plugin, "_tool_action_map"):
+            tool_action_map = plugin._tool_action_map
+            break
+
+    if fleet_map is None:
+        fleet_map = build_fleet_map(
+            root_agent=root_agent, tool_action_map=tool_action_map
+        )
+
+    unique_tools: set[str] = set()
+    for meta in fleet_map.agents.values():
+        for t in meta.get("tools", []):
+            unique_tools.add(t)
+
+    return {
+        "agent_names": list(fleet_map.agents.keys()),
+        "tool_names": sorted(unique_tools),
+        "tool_action_map": tool_action_map,
+        "root_agent": root_agent,
+        "fleet_map": fleet_map,
+    }
+
+
 async def execute_attack(
     objective: AttackObjective,
     governed_app: App,
     fleet_context: dict[str, Any],
     clean_query: str = "Create a compliance report on Google UK Limited",
 ) -> AttackResult:
-    """Execute a red-team attack against the governed fleet.
-
-    Args:
-        objective: Attack objective to execute.
-        governed_app: The governed App with GatewayPlugin attached.
-        fleet_context: Dict with "agent_names", "tool_names", "tool_action_map", "root_agent".
-        clean_query: Legitimate query to use for tool_response injection.
-
-    Returns:
-        AttackResult with the full attack outcome.
-    """
+    """Execute a single-shot red-team attack against the governed fleet."""
     payload = generate_payload(objective, fleet_context)
 
     chain_id = str(uuid.uuid4())
@@ -133,7 +197,6 @@ async def execute_attack(
         else:
             blocked_by = "gateway_scope"
 
-    # Determine injection agent for blast radius calculation
     injection_agent = getattr(root_agent, "name", "root_agent")
     if objective.injection_surface == "tool_response" and payload.target_tool:
         tool_owner = _find_tool_owner_agent(root_agent, payload.target_tool)
@@ -169,7 +232,7 @@ async def _execute_step_in_session(
 ) -> StepResult:
     """Execute a single campaign step within an existing persistent runner session."""
     chain_id = str(uuid.uuid4())
-    message_text = clean_query if step.surface == "tool_response" else step.payload
+    message_text = clean_query if step.surface in ("tool_response", "state_injection", "inter_agent") else step.payload
 
     runner_error: str | None = None
     try:
@@ -239,26 +302,17 @@ async def execute_campaign(
 ) -> Campaign:
     """Execute a multi-step adversary campaign against the governed fleet.
 
-    Maintains a single persistent ADK session across attack steps to test multi-turn
-    conversational injection, defense evasion, and behavioral adaptation.
-
-    Args:
-        objective: The attack objective to pursue.
-        governed_app: The governed App with GatewayPlugin attached.
-        fleet_context: Dict with agent metadata and tool action maps.
-        max_steps: Maximum number of steps in the campaign.
-        clean_query: Legitimate query used for tool_response testing.
-
-    Returns:
-        Campaign: The completed campaign record with all step results.
+    Maintains a single persistent ADK session across attack steps. Each step
+    is routed through the correct injection surface via the surfaces/ helpers.
     """
     root_agent = fleet_context.get("root_agent") or governed_app.root_agent
     tool_action_map = fleet_context.get("tool_action_map", {})
 
-    fleet_map = build_fleet_map(root_agent, tool_action_map=tool_action_map)
+    fleet_map = fleet_context.get("fleet_map") or build_fleet_map(
+        root_agent, tool_action_map=tool_action_map
+    )
     catalog = load_all_templates()
 
-    # Formulate initial strategic plan
     initial_plan = await plan_campaign(objective.id, fleet_map, catalog)
 
     campaign = Campaign(
@@ -290,32 +344,45 @@ async def execute_campaign(
 
     while step_num <= max_steps and steps_queue:
         planned = steps_queue.pop(0)
+
+        # Force the objective's injection surface when the strategist picks
+        # user_message for an objective that needs tool_response injection.
+        # Without this, PoisonPlugin never fires and F5 never screens.
+        effective_surface = planned.surface
+        if (
+            objective.injection_surface == "tool_response"
+            and planned.surface == "user_message"
+        ):
+            effective_surface = "tool_response"
+
+        effective_tool = planned.target_tool or (
+            objective.target_tools[0] if objective.target_tools else None
+        )
+
         campaign_step = CampaignStep(
             step_number=step_num,
             phase=planned.phase,
             objective=objective.id,
-            surface=planned.surface,
+            surface=effective_surface,
             payload=planned.payload_template,
             template_id=objective.id,
             technique=planned.technique,
             target_agent=planned.target_agent,
-            target_tool=planned.target_tool,
+            target_tool=effective_tool,
         )
         campaign.steps.append(campaign_step)
 
-        # Set up dynamic PoisonPlugin if the step targets tool_response
-        if planned.surface == "tool_response":
-            target_tool = planned.target_tool or (
-                objective.target_tools[0] if objective.target_tools else ""
-            )
-            poison_plugin = PoisonPlugin(
-                target_tool=target_tool,
-                poison_text=planned.payload_template,
-            )
-            # Prepend plugin to runner's app
+        surface_config = _prepare_surface(campaign_step, objective, clean_query)
+        surface_plugin = surface_config.get("plugin")
+
+        if surface_plugin is not None:
             run_app.plugins = [
-                poison_plugin,
+                surface_plugin,
                 *[p for p in plugins if not isinstance(p, PoisonPlugin)],
+            ]
+        else:
+            run_app.plugins = [
+                p for p in plugins if not isinstance(p, PoisonPlugin)
             ]
 
         step_result = await _execute_step_in_session(
@@ -329,11 +396,9 @@ async def execute_campaign(
         )
         campaign.add_step_result(step_result)
 
-        # Early exit if objective was achieved
         if step_result.verdict == "allowed" or step_num >= max_steps:
             break
 
-        # If more steps are needed and queue is empty, adapt next step
         if not steps_queue:
             adapted = await adapt_step(campaign, step_result)
             if adapted:

@@ -37,12 +37,7 @@ def parse_defense_response(step_result: StepResult) -> StrategySignal:
     reasons_text = " ".join(step_result.denial_reasons).lower()
     defense_layer = step_result.defense_layer
 
-    if (
-        defense_layer == "F5_model_armor"
-        or "model_armor" in reasons_text
-        or "quarantined" in reasons_text
-        or "classifier" in reasons_text
-    ):
+    if defense_layer == "F5_model_armor" or "quarantined" in reasons_text:
         return StrategySignal(
             blocked_by="model_armor",
             recommendation=(
@@ -53,12 +48,7 @@ def parse_defense_response(step_result: StepResult) -> StrategySignal:
             defense_layer="F5_model_armor",
         )
 
-    if (
-        defense_layer == "F5_regex"
-        or "regex" in reasons_text
-        or "static pattern" in reasons_text
-        or "screen:" in reasons_text
-    ):
+    if defense_layer == "F5_regex" or "regex" in reasons_text:
         return StrategySignal(
             blocked_by="screen_regex",
             recommendation=(
@@ -69,13 +59,7 @@ def parse_defense_response(step_result: StepResult) -> StrategySignal:
             defense_layer="F5_regex",
         )
 
-    if (
-        defense_layer == "F4_gateway"
-        or "scope caveat" in reasons_text
-        or "ceiling" in reasons_text
-        or "not permitted" in reasons_text
-        or "denied" in reasons_text
-    ):
+    if defense_layer == "F4_gateway" or "scope caveat" in reasons_text:
         return StrategySignal(
             blocked_by="gateway_scope",
             recommendation=(
@@ -86,11 +70,7 @@ def parse_defense_response(step_result: StepResult) -> StrategySignal:
             defense_layer="F4_gateway",
         )
 
-    if (
-        defense_layer == "F7_memory"
-        or "violation" in reasons_text
-        or "history" in reasons_text
-    ):
+    if defense_layer == "F7_memory" or "violation" in reasons_text:
         return StrategySignal(
             blocked_by="memory_bank",
             recommendation=(

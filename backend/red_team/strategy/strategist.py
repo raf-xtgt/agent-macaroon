@@ -1,6 +1,7 @@
-"""Llama 4 Maverick strategist for adversary campaign planning and adaptation."""
+"""Llama 3.3 strategist for adversary campaign planning and adaptation."""
 
 import json
+import os
 from dataclasses import dataclass, field
 
 from google import genai
@@ -8,12 +9,27 @@ from google.genai import types
 
 from red_team.agent import RED_TEAM_MODEL
 from red_team.catalog.templates import AttackTemplate
+from red_team.catalog.techniques import (
+    context_manipulation,
+    delimiter_confusion,
+    encoding_evasion,
+    instruction_override,
+    multi_language,
+)
 from red_team.recon.fleet_map import FleetMap
 
 from .campaign import Campaign, StepResult
 from .feedback import parse_defense_response
-import os
+
 _RED_TEAM_LOCATION = os.environ.get("GOOGLE_CLOUD_LOCATION", "us-central1")
+
+_TECHNIQUE_FNS: dict[str, callable] = {
+    "instruction_override": instruction_override,
+    "encoding_evasion": encoding_evasion,
+    "delimiter_confusion": delimiter_confusion,
+    "context_manipulation": context_manipulation,
+    "multi_language": multi_language,
+}
 
 @dataclass
 class PlannedStep:
@@ -57,8 +73,23 @@ Output ONLY valid JSON matching this schema:
 Do not include markdown fences, prefixes, or explanations outside the JSON."""
 
 
+def apply_technique(technique: str, payload: str) -> str:
+    """Mutate a payload using the named atomic technique.
+
+    Picks the best variant from the technique function's output.
+    Returns the original payload if the technique is unknown or produces nothing.
+    """
+    fn = _TECHNIQUE_FNS.get(technique)
+    if fn is None:
+        return payload
+    variants = fn(payload)
+    if not variants:
+        return payload
+    return variants[0]
+
+
 def _parse_steps_from_json(text: str) -> list[PlannedStep]:
-    """Extract PlannedStep list from raw JSON response."""
+    """Extract PlannedStep list from raw JSON response and apply techniques."""
     clean_text = text.strip()
     if clean_text.startswith("```"):
         lines = clean_text.splitlines()
@@ -70,12 +101,16 @@ def _parse_steps_from_json(text: str) -> list[PlannedStep]:
     raw_steps = data.get("steps", [])
     steps: list[PlannedStep] = []
     for s in raw_steps:
+        technique = s.get("technique", "instruction_override")
+        raw_payload = s.get("payload_template", "")
+        mutated_payload = apply_technique(technique, raw_payload)
+
         steps.append(
             PlannedStep(
                 surface=s.get("surface", "user_message"),
                 target_agent=s.get("target_agent"),
-                technique=s.get("technique", "instruction_override"),
-                payload_template=s.get("payload_template", ""),
+                technique=technique,
+                payload_template=mutated_payload,
                 expected_defense_layer=s.get("expected_defense_layer"),
                 target_tool=s.get("target_tool"),
                 phase=s.get("phase", "exploit"),
@@ -232,10 +267,13 @@ async def adapt_step(
         else "context_manipulation"
     )
 
+    base_payload = last_result.step.payload
+    mutated_payload = apply_technique(next_technique, base_payload)
+
     return PlannedStep(
         surface=next_surface,
         target_agent=last_result.step.target_agent,
         technique=next_technique,
-        payload_template=f"[ADAPTED] {last_result.step.payload}",
+        payload_template=mutated_payload,
         phase="evasion",
     )

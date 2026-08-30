@@ -1,21 +1,36 @@
 "use client";
 
 import { useState } from "react";
-import type { AttackObjective, AttackResultData } from "../../types";
+import type { AttackObjective, AttackResultData, AttackMode } from "../../types";
 
 interface RedTeamPanelProps {
   objectives: AttackObjective[];
   selectedObjectiveId: string;
   onSelectObjective: (id: string) => void;
+  attackMode: AttackMode;
+  onSelectMode: (mode: AttackMode) => void;
   onLaunchAttack: () => void;
   isAttacking: boolean;
   attackResult: AttackResultData | null;
 }
 
+const MODE_LABELS: Record<AttackMode, { label: string; hint: string }> = {
+  single: {
+    label: "Single",
+    hint: "One payload, one shot — tests a single injection against the fleet.",
+  },
+  campaign: {
+    label: "Campaign",
+    hint: "Multi-step adaptive attack — recon, strategy, evasion techniques, feedback loop.",
+  },
+};
+
 export function RedTeamPanel({
   objectives,
   selectedObjectiveId,
   onSelectObjective,
+  attackMode,
+  onSelectMode,
   onLaunchAttack,
   isAttacking,
   attackResult,
@@ -50,6 +65,23 @@ export function RedTeamPanel({
             )}
           </select>
 
+          {/* Mode selector */}
+          <div className="flex items-center gap-1.5 shrink-0 group relative">
+            <select
+              value={attackMode}
+              onChange={(e) => onSelectMode(e.target.value as AttackMode)}
+              disabled={isAttacking}
+              className="px-2.5 py-1.5 bg-ink border border-slate/40 rounded text-parchment font-mono text-xs focus:outline-none focus:border-gemma-purple focus:ring-1 focus:ring-gemma-purple disabled:opacity-50 cursor-pointer"
+            >
+              <option value="single">{MODE_LABELS.single.label}</option>
+              <option value="campaign">{MODE_LABELS.campaign.label}</option>
+            </select>
+            <div className="hidden group-hover:block absolute bottom-full left-0 mb-1.5 w-64 p-2 bg-ink border border-slate/50 rounded shadow-lg text-[10px] text-slate font-sans z-10">
+              <p className="text-parchment font-semibold mb-1">{MODE_LABELS[attackMode].label} mode</p>
+              <p>{MODE_LABELS[attackMode].hint}</p>
+            </div>
+          </div>
+
           <button
             type="button"
             onClick={onLaunchAttack}
@@ -70,7 +102,7 @@ export function RedTeamPanel({
           </button>
         </div>
 
-        {/* Verdict Badge in Header / Controls row if result present */}
+        {/* Verdict Badge */}
         {attackResult && (
           <div className="flex items-center gap-2 shrink-0 self-end sm:self-center">
             <span className="text-slate">verdict:</span>
@@ -119,11 +151,20 @@ export function RedTeamPanel({
             </div>
             <span>│</span>
             <div>
-              model:{" "}
-              <span className="text-gemma-purple font-mono">
-                {attackResult.payload.model_used || "gemma-3-27b-it"}
-              </span>
+              mode:{" "}
+              <span className="text-gemma-purple font-mono">{attackMode}</span>
             </div>
+            {attackResult.payload?.model_used && (
+              <>
+                <span>│</span>
+                <div>
+                  model:{" "}
+                  <span className="text-gemma-purple font-mono">
+                    {attackResult.payload.model_used}
+                  </span>
+                </div>
+              </>
+            )}
             <span>│</span>
             <div>
               chain:{" "}

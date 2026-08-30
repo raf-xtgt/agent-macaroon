@@ -76,3 +76,5 @@ export interface ArmorStatus {
   };
 }
 
+export type AttackMode = "single" | "campaign";
+

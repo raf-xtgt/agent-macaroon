@@ -394,7 +394,7 @@ def test_api_fleet_map_endpoint() -> None:
         tool_actions={"search_companies": "search"},
     )
 
-    with patch("red_team.api.build_fleet_map", return_value=mock_map):
+    with patch("red_team.executor.build_fleet_map", return_value=mock_map):
         response = client.get("/red-team/fleet-map")
 
     assert response.status_code == 200

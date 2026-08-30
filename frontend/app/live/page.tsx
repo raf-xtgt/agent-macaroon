@@ -7,6 +7,7 @@ import type {
   AttackObjective,
   AttackResultData,
   ArmorStatus,
+  AttackMode,
 } from "../types";
 import { LiveTree } from "./components/LiveTree";
 import { BlastRadiusPanel } from "./components/BlastRadiusPanel";
@@ -28,6 +29,7 @@ export default function LiveDashboardPage() {
   const [wsStatus, setWsStatus] = useState<"connecting" | "connected" | "disconnected">("connecting");
   const [objectives, setObjectives] = useState<AttackObjective[]>([]);
   const [selectedObjectiveId, setSelectedObjectiveId] = useState<string>("");
+  const [attackMode, setAttackMode] = useState<AttackMode>("single");
   const [isAttacking, setIsAttacking] = useState<boolean>(false);
   const [attackResult, setAttackResult] = useState<AttackResultData | null>(null);
   const [armorStatus, setArmorStatus] = useState<ArmorStatus | null>(null);
@@ -200,11 +202,32 @@ export default function LiveDashboardPage() {
       const res = await fetch(`${apiBaseUrl}/red-team/attack`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ objective_id: selectedObjectiveId }),
+        body: JSON.stringify({ objective_id: selectedObjectiveId, mode: attackMode }),
       });
 
       if (res.ok) {
-        const data: AttackResultData = await res.json();
+        const raw = await res.json();
+        let data: AttackResultData;
+        if (raw.mode === "campaign") {
+          const firstStep = raw.steps?.[0];
+          data = {
+            objective: raw.objective,
+            payload: {
+              payload_text: firstStep?.payload || "",
+              model_used: "",
+              injection_surface: raw.objective?.injection_surface || "",
+              target_tool: null,
+            },
+            verdict: raw.aggregate_verdict === "allowed" ? "allowed" : "blocked",
+            blocked_by: firstStep?.defense_layer || null,
+            chain_id: firstStep?.chain_id || raw.campaign_id || null,
+            spans_count: raw.steps?.reduce((s: number, r: { spans_count: number }) => s + r.spans_count, 0) || 0,
+            denial_reasons: raw.steps?.flatMap((r: { denial_reasons: string[] }) => r.denial_reasons) || [],
+            blast_radius: raw.blast_radius || null,
+          };
+        } else {
+          data = raw as AttackResultData;
+        }
         setAttackResult(data);
       } else {
         console.error("Attack request failed with status:", res.status);
@@ -214,7 +237,7 @@ export default function LiveDashboardPage() {
     } finally {
       setIsAttacking(false);
     }
-  }, [apiBaseUrl, selectedObjectiveId, isAttacking]);
+  }, [apiBaseUrl, selectedObjectiveId, attackMode, isAttacking]);
 
   const handleResetSession = () => {
     setSpans([]);
@@ -288,6 +311,8 @@ export default function LiveDashboardPage() {
                 objectives={objectives}
                 selectedObjectiveId={selectedObjectiveId}
                 onSelectObjective={setSelectedObjectiveId}
+                attackMode={attackMode}
+                onSelectMode={setAttackMode}
                 onLaunchAttack={handleLaunchAttack}
                 isAttacking={isAttacking}
                 attackResult={attackResult}
@@ -362,6 +387,8 @@ export default function LiveDashboardPage() {
               objectives={objectives}
               selectedObjectiveId={selectedObjectiveId}
               onSelectObjective={setSelectedObjectiveId}
+              attackMode={attackMode}
+              onSelectMode={setAttackMode}
               onLaunchAttack={handleLaunchAttack}
               isAttacking={isAttacking}
               attackResult={attackResult}

@@ -190,11 +190,9 @@ class GatewayPlugin(BasePlugin):
     ) -> types.Content | None:
         """Attenuate the macaroon before an agent executes.
 
-        Fires uniformly across all agent handoffs (including entry agent). Verifies the
-        macaroon HMAC signature, computes scope intersection with the target agent's
-        registry ceiling, and writes the attenuated macaroon and updated span pointer back
-        to session state. Emits audit spans for every allow and denial decision (F6).
-        Fails closed on any missing token, invalid signature, or delegation depth exhaustion.
+        Pushes the current (parent) macaroon onto a stack before narrowing so that
+        after_agent_callback can restore it when this agent's subtree completes.
+        This prevents sibling agents from starving each other's scope.
 
         Args:
             agent: The target agent about to execute.
@@ -211,6 +209,16 @@ class GatewayPlugin(BasePlugin):
         if hasattr(callback_context, "state") and callback_context.state is not None:
             parent_span_id = callback_context.state.get("agent_macaroon_span")
             raw_macaroon = callback_context.state.get("agent_macaroon")
+
+            # Push parent macaroon + span onto stack before narrowing
+            stack = callback_context.state.get("_macaroon_stack", [])
+            stack.append(
+                {
+                    "macaroon": raw_macaroon,
+                    "span": parent_span_id,
+                }
+            )
+            callback_context.state["_macaroon_stack"] = stack
 
         if not raw_macaroon or not isinstance(raw_macaroon, str):
             # Orphaned span: chain_id and identifier hash cannot be parsed because no token exists
@@ -377,6 +385,26 @@ class GatewayPlugin(BasePlugin):
 
         callback_context.state["agent_macaroon"] = attenuated.serialize()
         callback_context.state["agent_macaroon_span"] = span_id
+        return None
+
+    async def after_agent_callback(
+        self,
+        *,
+        agent: BaseAgent,
+        callback_context: CallbackContext,
+    ) -> types.Content | None:
+        """Restore the parent macaroon after an agent's subtree completes.
+
+        Pops the pre-attenuation macaroon from the stack so sibling agents
+        start from the same parent scope instead of a narrowed copy.
+        """
+        if hasattr(callback_context, "state") and callback_context.state is not None:
+            stack = callback_context.state.get("_macaroon_stack", [])
+            if stack:
+                saved = stack.pop()
+                callback_context.state["agent_macaroon"] = saved["macaroon"]
+                callback_context.state["agent_macaroon_span"] = saved["span"]
+                callback_context.state["_macaroon_stack"] = stack
         return None
 
     async def before_tool_callback(

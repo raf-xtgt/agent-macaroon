@@ -6,7 +6,7 @@ from typing import Any
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 
-from .executor import execute_attack, execute_campaign
+from .executor import execute_attack, execute_campaign, extract_fleet_context
 from .objectives import OBJECTIVES
 from .recon.fleet_map import build_fleet_map
 
@@ -19,31 +19,6 @@ class AttackRequest(BaseModel):
     objective_id: str
     mode: str = "single"  # "single" or "campaign"
     max_steps: int = 5
-
-
-def _extract_fleet_context(governed_app: Any) -> dict[str, Any]:
-    """Extract agent names, tool names, and action mappings from the governed App."""
-    root_agent = getattr(governed_app, "root_agent", None)
-
-    tool_action_map: dict[str, str] = {}
-    for plugin in getattr(governed_app, "plugins", []):
-        if hasattr(plugin, "_tool_action_map"):
-            tool_action_map = plugin._tool_action_map
-            break
-
-    fleet_map = build_fleet_map(root_agent=root_agent, tool_action_map=tool_action_map)
-
-    unique_tools: set[str] = set()
-    for meta in fleet_map.agents.values():
-        for t in meta.get("tools", []):
-            unique_tools.add(t)
-
-    return {
-        "agent_names": list(fleet_map.agents.keys()),
-        "tool_names": sorted(unique_tools),
-        "tool_action_map": tool_action_map,
-        "root_agent": root_agent,
-    }
 
 
 @router.get("/objectives")
@@ -74,12 +49,8 @@ def get_fleet_map() -> dict[str, Any]:
             detail=f"Failed to load governed target fleet: {exc}",
         ) from exc
 
-    fleet_context = _extract_fleet_context(governed_app)
-    fleet_map = build_fleet_map(
-        root_agent=fleet_context.get("root_agent"),
-        tool_action_map=fleet_context.get("tool_action_map", {}),
-    )
-    return fleet_map.to_dict()
+    fleet_context = extract_fleet_context(governed_app)
+    return fleet_context["fleet_map"].to_dict()
 
 
 @router.post("/attack")
@@ -92,7 +63,6 @@ async def run_attack(request: AttackRequest) -> dict[str, Any]:
             detail=f"Unknown objective_id '{request.objective_id}'",
         )
 
-    # Import governed fleet App
     try:
         from agents.governed.agent import app as governed_app
     except Exception as exc:
@@ -101,7 +71,7 @@ async def run_attack(request: AttackRequest) -> dict[str, Any]:
             detail=f"Failed to load governed target fleet: {exc}",
         ) from exc
 
-    fleet_context = _extract_fleet_context(governed_app)
+    fleet_context = extract_fleet_context(governed_app)
 
     if request.mode == "campaign":
         campaign = await execute_campaign(
@@ -158,7 +128,6 @@ async def run_attack(request: AttackRequest) -> dict[str, Any]:
             ),
         }
 
-    # Default: single attack mode
     result = await execute_attack(
         objective=objective,
         governed_app=governed_app,

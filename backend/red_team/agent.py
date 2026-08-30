@@ -1,4 +1,4 @@
-"""Red-team payload generator using Llama 4 Maverick (Vertex AI) with fallback."""
+"""Red-team payload generator using Llama 3.3 70B (Vertex AI) with Gemini fallback."""
 
 import os
 from dataclasses import dataclass
@@ -32,8 +32,8 @@ def generate_payload(
 ) -> AttackPayload:
     """Generate an adversarial payload for the given objective.
 
-    Uses Llama 4 Maverick on Vertex AI to generate creative natural-language prompt injection payloads,
-    falling back to Llama 3.3 70B, Gemini, or offline goal if unavailable.
+    Uses Llama 3.3 70B on Vertex AI to generate creative natural-language prompt injection payloads,
+    falling back to Gemini 2.5 Flash or offline goal if unavailable.
 
     Args:
         objective: The attack objective to generate a payload for.
