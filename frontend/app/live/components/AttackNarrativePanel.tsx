@@ -56,8 +56,8 @@ function StepCard({ span }: { span: SpanData }) {
     : "text-ledger-green border-ledger-green/40";
 
   return (
-    <div className="border border-slate/30 rounded-md bg-ink/50 p-3 space-y-1.5 text-[11px]">
-      <div className="flex items-center justify-between">
+    <div className="border border-slate/30 rounded-md bg-ink/50 p-3 space-y-1.5 text-[11px] min-w-0">
+      <div className="flex flex-wrap items-center justify-between gap-1">
         <span className="text-parchment font-semibold font-sans text-xs">
           STEP {stepNum}
         </span>
@@ -98,7 +98,7 @@ function StepCard({ span }: { span: SpanData }) {
         )}
       </div>
       {fields.defense && (
-        <div className="text-slate font-mono">
+        <div className="text-slate font-mono break-words">
           defense:{" "}
           <span className="text-shield-blue font-semibold">{fields.defense}</span>
           {fields.reasons && (
@@ -151,7 +151,7 @@ export function AttackNarrativePanel({ spans }: AttackNarrativePanelProps) {
   if (narrativeSpans.length === 0) return null;
 
   return (
-    <div className="border border-slate/30 rounded-lg bg-ink p-4 font-mono text-xs space-y-3">
+    <div className="border border-slate/30 rounded-lg bg-ink p-4 font-mono text-xs space-y-3 min-w-0">
       {/* Header */}
       <div className="flex items-center justify-between border-b border-slate/20 pb-2">
         <div className="flex items-center gap-1.5 text-gemma-purple font-semibold font-sans uppercase tracking-wider text-xs">

@@ -327,7 +327,7 @@ export default function LiveDashboardPage() {
             </div>
           </div>
         ) : (
-          /* 2. Active Session Layout: 3-Panel Split per LIVE-DASH.md §2-4 */
+          /* 2. Active Session Layout — wireframe: Red Team + Narrative left, Tree right, Blast + Defense bottom */
           <div className="p-4 sm:p-6 space-y-4">
             {/* Top Toolbar / Reset */}
             <div className="flex items-center justify-between text-xs font-mono text-slate border-b border-slate/20 pb-3">
@@ -343,20 +343,36 @@ export default function LiveDashboardPage() {
               </button>
             </div>
 
-            {/* Main 2-Column Grid (Tree on Left, Blast + Defense on Right) */}
-            <div className="grid grid-cols-1 lg:grid-cols-[minmax(0,1fr)_360px] gap-4 items-start">
-              {/* Left Column: Live Delegation Tree */}
-              <div className="border border-slate/30 rounded-lg bg-ink p-4 sm:p-5 min-h-[500px] flex flex-col justify-between overflow-x-auto">
-                <div>
-                  <div className="border-b border-slate/20 pb-2 mb-3 flex items-center justify-between">
-                    <span className="text-slate font-sans uppercase tracking-wider text-[11px] font-semibold">
-                      Live Delegation Tree
-                    </span>
-                    <span className="text-[11px] font-mono text-slate">
-                      {spans.length} span{spans.length === 1 ? "" : "s"} emitted
-                    </span>
-                  </div>
+            {/* Main area: Left sidebar (Red Team + Narrative) + Right (Tree) */}
+            <div className="grid grid-cols-1 lg:grid-cols-[320px_minmax(0,1fr)] gap-4 items-start">
+              {/* Left Column: Red Team + Attack Narrative */}
+              <div className="space-y-4 min-w-0">
+                <RedTeamPanel
+                  objectives={objectives}
+                  selectedObjectiveId={selectedObjectiveId}
+                  onSelectObjective={setSelectedObjectiveId}
+                  attackMode={attackMode}
+                  onSelectMode={setAttackMode}
+                  onLaunchAttack={handleLaunchAttack}
+                  isAttacking={isAttacking}
+                  attackResult={attackResult}
+                />
 
+                <AttackNarrativePanel spans={spans} />
+              </div>
+
+              {/* Right Column: Live Delegation Tree (spans full height) */}
+              <div className="border border-slate/30 rounded-lg bg-ink p-4 sm:p-5 min-h-[500px] flex flex-col overflow-hidden">
+                <div className="border-b border-slate/20 pb-2 mb-3 flex items-center justify-between shrink-0">
+                  <span className="text-slate font-sans uppercase tracking-wider text-[11px] font-semibold">
+                    Live Delegation Tree
+                  </span>
+                  <span className="text-[11px] font-mono text-slate">
+                    {spans.length} span{spans.length === 1 ? "" : "s"} emitted
+                  </span>
+                </div>
+
+                <div className="flex-1 overflow-x-auto overflow-y-auto">
                   <LiveTree
                     spans={spans}
                     gcpProjectId={process.env.GOOGLE_CLOUD_PROJECT || "agent-macaroon"}
@@ -366,37 +382,22 @@ export default function LiveDashboardPage() {
                   />
                 </div>
               </div>
-
-              {/* Right Column: Blast Radius & Fleet Defense */}
-              <div className="space-y-4">
-                <BlastRadiusPanel
-                  blastRadius={attackResult?.blast_radius || null}
-                  isAttacking={isAttacking}
-                />
-
-                <FleetDefensePanel
-                  armorStatus={armorStatus}
-                  immunizationLog={immunizationLog}
-                  violationsCount={violationsCount}
-                  recentEvents={recentEvents}
-                />
-              </div>
             </div>
 
-            {/* Red Team Panel — full width below the tree */}
-            <RedTeamPanel
-              objectives={objectives}
-              selectedObjectiveId={selectedObjectiveId}
-              onSelectObjective={setSelectedObjectiveId}
-              attackMode={attackMode}
-              onSelectMode={setAttackMode}
-              onLaunchAttack={handleLaunchAttack}
-              isAttacking={isAttacking}
-              attackResult={attackResult}
-            />
+            {/* Bottom row: Blast Radius + Fleet Defense side by side */}
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+              <BlastRadiusPanel
+                blastRadius={attackResult?.blast_radius || null}
+                isAttacking={isAttacking}
+              />
 
-            {/* Attack Narrative — auto-shows when narrative spans arrive */}
-            <AttackNarrativePanel spans={spans} />
+              <FleetDefensePanel
+                armorStatus={armorStatus}
+                immunizationLog={immunizationLog}
+                violationsCount={violationsCount}
+                recentEvents={recentEvents}
+              />
+            </div>
           </div>
         )}
       </div>
