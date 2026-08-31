@@ -247,3 +247,75 @@ async def test_execute_campaign_stops_on_objective_achieved() -> None:
     assert len(campaign.results) == 1
     assert campaign.results[0].verdict == "allowed"
     assert campaign.status == CampaignState.COMPLETE.value
+
+
+@pytest.mark.asyncio
+async def test_execute_campaign_creates_runner_with_poison_plugin_per_step() -> None:
+    """Assert execute_campaign creates App with PoisonPlugin at position 0 on tool_response steps."""
+    from red_team.poison_plugin import PoisonPlugin
+
+    objective = OBJECTIVES["fabricate_compliance"]
+    root_agent = SimpleNamespace(
+        name="root_agent",
+        tools=[SimpleNamespace(name="get_company_profile")],
+        sub_agents=[],
+    )
+    governed_app = SimpleNamespace(root_agent=root_agent, plugins=[])
+    fleet_context = {
+        "root_agent": root_agent,
+        "tool_action_map": {"get_company_profile": "read"},
+    }
+
+    mock_plan = CampaignPlan(
+        objective="fabricate_compliance",
+        steps=[
+            PlannedStep(
+                phase="exploit",
+                surface="tool_response",
+                target_agent="root_agent",
+                target_tool="get_company_profile",
+                technique="context_manipulation",
+                payload_template="Poisoned compliance notes",
+            )
+        ],
+    )
+
+    created_apps = []
+
+    def _mock_app_init(*args: Any, **kwargs: Any) -> Any:
+        app_obj = SimpleNamespace(
+            root_agent=kwargs.get("root_agent"),
+            plugins=kwargs.get("plugins", []),
+            name=kwargs.get("name"),
+        )
+        created_apps.append(app_obj)
+        return app_obj
+
+    with (
+        patch("red_team.executor.plan_campaign", return_value=mock_plan),
+        patch("red_team.executor.get_chain_spans", return_value=[]),
+        patch("red_team.executor.InMemoryRunner") as mock_runner_cls,
+        patch("red_team.executor.App", side_effect=_mock_app_init),
+    ):
+        mock_runner = MagicMock()
+        mock_runner.session_service.create_session = AsyncMock()
+
+        async def _mock_run_async(*args: Any, **kwargs: Any) -> Any:
+            if False:
+                yield None
+
+        mock_runner.run_async = _mock_run_async
+        mock_runner_cls.return_value = mock_runner
+
+        await execute_campaign(
+            objective=objective,
+            governed_app=governed_app,  # type: ignore[arg-type]
+            fleet_context=fleet_context,
+            max_steps=1,
+        )
+
+    assert len(created_apps) == 1
+    step_app = created_apps[0]
+    assert len(step_app.plugins) == 1
+    assert isinstance(step_app.plugins[0], PoisonPlugin)
+    assert step_app.plugins[0]._target_tool == "get_company_profile"

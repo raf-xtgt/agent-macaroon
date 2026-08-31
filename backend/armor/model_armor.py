@@ -10,6 +10,7 @@ from dataclasses import dataclass
 from typing import Any
 
 import google.cloud.modelarmor_v1 as ma
+from google.api_core.client_options import ClientOptions
 from google.protobuf.field_mask_pb2 import FieldMask
 
 
@@ -50,9 +51,9 @@ def _get_client() -> ma.ModelArmorClient:
         location = os.environ.get("GOOGLE_CLOUD_LOCATION", "us-central1")
         if location and location != "global":
             _client = ma.ModelArmorClient(
-                client_options={
-                    "api_endpoint": f"modelarmor.{location}.rep.googleapis.com"
-                }
+                client_options=ClientOptions(
+                    api_endpoint=f"modelarmor.{location}.rep.googleapis.com",
+                )
             )
         else:
             _client = ma.ModelArmorClient()

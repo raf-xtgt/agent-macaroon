@@ -368,11 +368,19 @@ def test_get_template_config_fallback_on_exception(
 
 @patch("armor.model_armor.ma.ModelArmorClient")
 def test_get_client_uses_regional_endpoint(mock_client_cls: MagicMock) -> None:
-    """Assert _get_client sets regional api_endpoint client_options when GOOGLE_CLOUD_LOCATION is regional."""
+    """Assert _get_client sets regional api_endpoint ClientOptions when GOOGLE_CLOUD_LOCATION is regional."""
+    from google.api_core.client_options import ClientOptions
+
     import armor.model_armor as ma_module
 
     # 1. Test with explicit regional location
-    with patch.dict(os.environ, {"GOOGLE_CLOUD_LOCATION": "us-central1"}):
+    with patch.dict(
+        os.environ,
+        {
+            "GOOGLE_CLOUD_LOCATION": "us-central1",
+            "GOOGLE_CLOUD_PROJECT": "test-project-123",
+        },
+    ):
         ma_module._client = None
         mock_client_cls.reset_mock()
         client = _get_client()
@@ -380,12 +388,12 @@ def test_get_client_uses_regional_endpoint(mock_client_cls: MagicMock) -> None:
         assert mock_client_cls.called
         call_kwargs = mock_client_cls.call_args.kwargs
         assert "client_options" in call_kwargs
-        assert call_kwargs["client_options"] == {
-            "api_endpoint": "modelarmor.us-central1.rep.googleapis.com"
-        }
+        opts = call_kwargs["client_options"]
+        assert isinstance(opts, ClientOptions)
+        assert opts.api_endpoint == "modelarmor.us-central1.rep.googleapis.com"
 
     # 2. Test with default (when GOOGLE_CLOUD_LOCATION is not set -> defaults to us-central1)
-    with patch.dict(os.environ, {}, clear=True):
+    with patch.dict(os.environ, {"GOOGLE_CLOUD_PROJECT": "default-proj"}, clear=True):
         ma_module._client = None
         mock_client_cls.reset_mock()
         client = _get_client()
@@ -393,9 +401,9 @@ def test_get_client_uses_regional_endpoint(mock_client_cls: MagicMock) -> None:
         assert mock_client_cls.called
         call_kwargs = mock_client_cls.call_args.kwargs
         assert "client_options" in call_kwargs
-        assert call_kwargs["client_options"] == {
-            "api_endpoint": "modelarmor.us-central1.rep.googleapis.com"
-        }
+        opts = call_kwargs["client_options"]
+        assert isinstance(opts, ClientOptions)
+        assert opts.api_endpoint == "modelarmor.us-central1.rep.googleapis.com"
 
     # 3. Test with global location (no client_options override)
     with patch.dict(os.environ, {"GOOGLE_CLOUD_LOCATION": "global"}):

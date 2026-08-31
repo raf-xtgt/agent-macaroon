@@ -361,22 +361,9 @@ async def execute_campaign(
         max_steps=max_steps,
     )
 
-    session_id = f"session-campaign-{uuid.uuid4().hex[:8]}"
     user_id = "red-team-tester"
     app_name = "red_team_campaign"
-
     plugins = list(governed_app.plugins)
-    run_app = App(name=app_name, root_agent=root_agent, plugins=plugins)
-    runner = InMemoryRunner(app=run_app)
-
-    try:
-        await runner.session_service.create_session(
-            app_name=app_name,
-            user_id=user_id,
-            session_id=session_id,
-        )
-    except Exception as exc:  # noqa: BLE001
-        print(f"Failed to create campaign session: {exc}")
 
     steps_queue: list[PlannedStep] = list(initial_plan.steps)
     step_num = 1
@@ -414,18 +401,29 @@ async def execute_campaign(
         surface_config = _prepare_surface(campaign_step, objective, clean_query)
         surface_plugin = surface_config.get("plugin")
 
+        # Build a fresh plugin list for this step
+        step_plugins = [p for p in plugins if not isinstance(p, PoisonPlugin)]
         if surface_plugin is not None:
-            run_app.plugins = [
-                surface_plugin,
-                *[p for p in plugins if not isinstance(p, PoisonPlugin)],
-            ]
-        else:
-            run_app.plugins = [p for p in plugins if not isinstance(p, PoisonPlugin)]
+            step_plugins.insert(0, surface_plugin)
+
+        # Create a fresh App + Runner for this step so PoisonPlugin takes effect
+        step_app = App(name=app_name, root_agent=root_agent, plugins=step_plugins)
+        step_runner = InMemoryRunner(app=step_app)
+        step_session_id = f"session-campaign-step-{step_num}-{uuid.uuid4().hex[:8]}"
+
+        try:
+            await step_runner.session_service.create_session(
+                app_name=app_name,
+                user_id=user_id,
+                session_id=step_session_id,
+            )
+        except Exception as exc:  # noqa: BLE001
+            print(f"Failed to create step session: {exc}")
 
         step_result = await _execute_step_in_session(
             step=campaign_step,
-            runner=runner,
-            session_id=session_id,
+            runner=step_runner,
+            session_id=step_session_id,
             user_id=user_id,
             root_agent=root_agent,
             tool_action_map=tool_action_map,
