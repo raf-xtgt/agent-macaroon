@@ -101,6 +101,7 @@ export interface TuneResponse {
   success: boolean;
   error?: string | null;
   applied_config?: TuneConfig | null;
+  seeded_patterns?: string[];
 }
 
 export interface DefenseProfile {

@@ -269,7 +269,7 @@ export function TuneDefensesPanel({
               Responsible AI (RAI) Filters
             </legend>
 
-            <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 text-xs">
+            <div className="flex flex-col gap-2 text-xs">
               {ALL_RAI_TYPES.map((type) => {
                 const isChecked = raiEnabledMap[type];
                 return (

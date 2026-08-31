@@ -12,13 +12,36 @@ from armor.model_armor import (
     get_template_config,
     tune_template,
 )
-from armor.screen import get_active_pattern_count, list_runtime_patterns
+from armor.screen import (
+    add_runtime_pattern,
+    get_active_pattern_count,
+    list_runtime_patterns,
+)
+from audit.trace import emit_span
 
 router = APIRouter(prefix="/armor", tags=["model-armor"])
 
 _ALLOWED_CONFIDENCE = {"LOW_AND_ABOVE", "MEDIUM_AND_ABOVE", "HIGH"}
 _ALLOWED_RAI_TYPES = {"DANGEROUS", "HARASSMENT", "HATE_SPEECH", "SEXUALLY_EXPLICIT"}
 _ALLOWED_ENFORCEMENT = {"INSPECT_AND_BLOCK", "INSPECT_ONLY"}
+
+# Seed runtime patterns targeting context_manipulation evasion technique.
+# These catch adversarial directives hidden in AML/KYC compliance framing
+# that evade both static regex and Model Armor ML classification.
+_SEED_PATTERNS = [
+    (
+        "tuned_compliance_directive",
+        r"(?:pursuant\s+to|in\s+accordance\s+with|under\s+the).*?(?:you\s+must|must\s+now|also\s+call|also\s+retrieve|incorporate\s+the\s+above)",
+    ),
+    (
+        "tuned_reference_item",
+        r"reference\s+item\s+\d[\d.]*\s*:.*?(?:call|retrieve|execute|invoke|get_|search_|fetch)",
+    ),
+    (
+        "tuned_operational_requirement",
+        r"(?:operational\s+requirement|mandatory\s+review\s+note|compliance\s+data)\s*:.*?(?:must|should|need\s+to|call|retrieve|suppress|override)",
+    ),
+]
 
 
 class RaiFilterItem(BaseModel):
@@ -73,7 +96,8 @@ def armor_tune(request: TuneRequest) -> dict[str, Any]:
     """Update live Model Armor template configuration.
 
     Validates confidence levels, responsible AI filter types, and enforcement settings
-    before applying changes via the Model Armor API.
+    before applying changes via the Model Armor API. Also seeds runtime regex patterns
+    targeting context_manipulation evasion techniques.
     """
     if request.pi_and_jailbreak_confidence not in _ALLOWED_CONFIDENCE:
         raise HTTPException(
@@ -120,7 +144,31 @@ def armor_tune(request: TuneRequest) -> dict[str, Any]:
             ),
         )
 
-    return result
+    # Seed runtime patterns targeting context_manipulation evasion if not already present.
+    existing_patterns = set(list_runtime_patterns())
+    seeded: list[str] = []
+    for name, pattern in _SEED_PATTERNS:
+        if name not in existing_patterns:
+            add_runtime_pattern(name, pattern)
+            seeded.append(name)
+
+    if seeded:
+        emit_span(
+            chain_id=None,
+            parent_span_id=None,
+            agent_id="red_team:tuner",
+            macaroon_identifier_hash=None,
+            action_requested="seed_patterns",
+            decision="allow",
+            reason=f"Seeded {len(seeded)} runtime patterns targeting context_manipulation evasion.",
+        )
+
+    return {
+        **result,
+        "seeded_patterns": [
+            name for name, _ in _SEED_PATTERNS if name in set(list_runtime_patterns())
+        ],
+    }
 
 
 @router.get("/export")

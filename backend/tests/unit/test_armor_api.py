@@ -162,3 +162,56 @@ def test_get_armor_export_no_secrets() -> None:
     assert "AGENT_MACAROON_ROOT_KEY" not in text
     assert "root_key" not in text
     assert "hmac" not in text.lower() or "macaroon" in text.lower()
+
+
+def test_post_armor_tune_seeds_runtime_patterns() -> None:
+    """Assert POST /armor/tune seeds context_manipulation runtime regex patterns and emits span."""
+    import armor.screen as screen_module
+    from armor.api import _SEED_PATTERNS
+    from armor.screen import list_runtime_patterns
+
+    # Clean up before test
+    for name, _ in _SEED_PATTERNS:
+        screen_module._runtime_patterns.pop(name, None)
+
+    payload = {
+        "pi_and_jailbreak_enabled": True,
+        "pi_and_jailbreak_confidence": "HIGH",
+    }
+    mock_applied = {
+        "success": True,
+        "applied_config": payload,
+        "error": None,
+    }
+
+    try:
+        with patch("armor.api.tune_template", return_value=mock_applied), patch(
+            "armor.api.emit_span"
+        ) as mock_emit_span:
+            response = client.post("/armor/tune", json=payload)
+            assert response.status_code == 200
+            data = response.json()
+            assert data["success"] is True
+            assert "seeded_patterns" in data
+
+            active_runtime = list_runtime_patterns()
+            for name, _ in _SEED_PATTERNS:
+                assert name in active_runtime
+                assert name in data["seeded_patterns"]
+
+            assert mock_emit_span.called
+            call_kwargs = mock_emit_span.call_args.kwargs
+            assert call_kwargs["agent_id"] == "red_team:tuner"
+            assert call_kwargs["action_requested"] == "seed_patterns"
+            assert "Seeded 3 runtime patterns" in call_kwargs["reason"]
+
+            # Second call should not re-seed duplicates
+            mock_emit_span.reset_mock()
+            response2 = client.post("/armor/tune", json=payload)
+            assert response2.status_code == 200
+            # Span shouldn't emit if 0 newly seeded
+            assert not mock_emit_span.called
+    finally:
+        # Clean up after test
+        for name, _ in _SEED_PATTERNS:
+            screen_module._runtime_patterns.pop(name, None)
